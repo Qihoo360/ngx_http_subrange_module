@@ -131,7 +131,7 @@ static ngx_int_t ngx_http_range_init(ngx_conf_t *cf){
 	ngx_http_handler_pt             *h;
 	ngx_http_core_main_conf_t       *cmcf;
 	cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
-	h = ngx_array_push(&cmcf->phases[NGX_HTTP_REWRITE_PHASE].handlers);
+	h = ngx_array_push(&cmcf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
 	if(h == NULL){
 		return NGX_ERROR;
 	}
@@ -430,9 +430,6 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 	ctx->sn = 0;
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
-	if(r != r->main){
-		return NGX_DECLINED;
-	}
 	if(r == r->main){
 		if(r->internal){ //internal redirect main request, Range has been added
 			return NGX_DECLINED;
@@ -462,9 +459,7 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 		if(ngx_http_subrange_parse(r, ctx, &ctx->range)!= NGX_OK){
 			return NGX_ERROR;
 		}
-		if(r == r->main){ //TODO process subrequest or not ?
-			ctx->offset = ctx->range.start;
-		}
+		ctx->offset = ctx->range.start;
 		if(ctx->range.end > ctx->offset + rlcf->size){
 			r->headers_in.range->value = ngx_http_subrange_get_range(r, ctx->offset, ctx->offset + rlcf->size -1);
 			ctx->touched = 1;
@@ -633,14 +628,12 @@ static  ngx_int_t ngx_http_subrange_fix_request_count(ngx_http_request_t *r, voi
 		return NGX_ERROR;
 	}
 	if(ctx->done){
-		ngx_http_send_special(r->main, NGX_HTTP_LAST);
 		return NGX_OK;
 	}
 	if(ctx->content_range.end + 1 == ctx->content_range.total){
 		ctx->done = 1;
 	}
-	ngx_http_send_special(r->main, NGX_HTTP_LAST);
-	if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
+	if(ngx_http_subrange_create_subrequest(r, ctx) != NGX_OK){
 		return NGX_ERROR;
 	}
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: post subrequest:c:%ud",r->main->count);
