@@ -14,7 +14,7 @@ static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r);
 static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_t *in);
-static ngx_int_t ngx_http_subrange_fix_request_count(ngx_http_request_t *r, void *data, ngx_int_t rc);
+static ngx_int_t ngx_http_subrange_post_subrequest(ngx_http_request_t *r, void *data, ngx_int_t rc);
 
 static ngx_command_t ngx_http_range_commands[] = { 
 	{ ngx_string("subrange"),
@@ -114,7 +114,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 }ngx_http_subrange_filter_ctx_t;
 
 static ngx_http_post_subrequest_t ngx_http_subrange_post_subrequest_handler = 
-{ngx_http_subrange_fix_request_count,NULL};
+{ngx_http_subrange_post_subrequest,NULL};
 
 static ngx_str_t ngx_http_status_lines[] = {
 	ngx_string("200 OK"),
@@ -294,7 +294,7 @@ static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key)
 
 	part = &headers->part;
 	h = part->elts;
-	for(i = 0;/**/; ++i){
+	for(i = 0;/* void */; ++i){
 		if(i >= part->nelts){
 			if(part->next == NULL){
 				break;
@@ -424,10 +424,10 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 	}
 	ctx->range_request = 0;
 	ctx->offset = 0;
-	ctx->touched = 0;
-	ctx->processed = 0;
-	ctx->done = 0;
-	ctx->sn = 0;
+	ctx->touched = 0; // the request has been split to subrange request
+	ctx->processed = 0; //the request/subrequest has been processed
+	ctx->done = 0;  // all subrequest done 
+	ctx->sn = 0;    // subrange sequence number
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
 	if(r == r->main){
@@ -597,7 +597,7 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	ngx_int_t rc, last;
 
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
-	if(r != r->main || ctx == NULL){
+	if(r != r->main || ctx == NULL || !ctx->touched){
 		return ngx_http_next_body_filter(r, in);
 	}
 	last = 0;
@@ -621,7 +621,7 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	}
 	return NGX_OK;
 }
-static  ngx_int_t ngx_http_subrange_fix_request_count(ngx_http_request_t *r, void *data, ngx_int_t rc){
+static  ngx_int_t ngx_http_subrange_post_subrequest(ngx_http_request_t *r, void *data, ngx_int_t rc){
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
 	if(ctx == NULL){
@@ -630,7 +630,7 @@ static  ngx_int_t ngx_http_subrange_fix_request_count(ngx_http_request_t *r, voi
 	if(ctx->done){
 		return NGX_OK;
 	}
-	if(ctx->content_range.end + 1 == ctx->content_range.total){
+	if(ctx->content_range.end + 1 >= ctx->content_range.total){
 		ctx->done = 1;
 	}
 	if(ngx_http_subrange_create_subrequest(r, ctx) != NGX_OK){
