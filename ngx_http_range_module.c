@@ -493,14 +493,15 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	if(ctx == NULL || !ctx->touched){
 		return ngx_http_next_header_filter(r);
 	}
-	if(!ctx->range_request){
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
-	}
 	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT ||
 	   r->http_version < NGX_HTTP_VERSION_10 ||
 	   r->headers_out.content_length_n == -1)
 	{
+		ctx->touched = 0; //upstream do not support subrange , untouch the request
 		return ngx_http_next_header_filter(r);
+	}
+	if(!ctx->range_request){
+		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
 	}
 	ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range);
 	/*Get the content range, and update the progress*/
