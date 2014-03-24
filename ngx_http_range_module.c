@@ -387,12 +387,12 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 			sr->headers_in.headers.last = &sr->headers_in.headers.part;
 		}
 		rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_range_module);
-		size = sizeof("bytes=-") + 2*NGX_OFF_T_LEN;
+		size = sizeof("bytes=-") + 2*NGX_SIZE_T_LEN;
 		range_value.data = ngx_palloc(sr->pool, size);
-		range_value.len = ngx_sprintf(range_value.data, "bytes=%O-%O", ctx->offset, ctx->offset + rlcf->size - 1)
+		range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, ctx->offset + rlcf->size - 1)
 			- range_value.data;
 		ngx_http_subrange_set_header(sr, &sr->headers_in.headers, range_key, range_value, &hdr);
-		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: subrequest:%ud subrange:%O-%O",
+		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: subrequest:%ud subrange:%i-%i",
 				ctx->sn, ctx->offset, ctx->offset + rlcf->size -1);
 		if(hdr){
 			sr->headers_in.range = hdr;
@@ -465,7 +465,7 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 			ctx->touched = 1;
 		}
 	}
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: mainrequest subrange:%O-%O",
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: mainrequest subrange:%i-%i",
 			ctx->offset, ctx->offset + rlcf->size -1);
 	return NGX_DECLINED;
 }
@@ -508,14 +508,9 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		r->headers_out.status = NGX_HTTP_OK; //Change 206 to 200
 		r->headers_out.content_length_n = ctx->content_range.total;
 
-		v = ctx->content_range.total;
-		while(v){
-			size += 1;
-			v /= 10;
-		}
-		content_length.data = ngx_palloc(r->pool, size);
-		ngx_sprintf(content_length.data, "%ud", ctx->content_range.total);
-		content_length.len = size;
+		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
+		content_length.len = ngx_sprintf(content_length.data, "%ui", ctx->content_range.total)
+							- content_length.data;
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length,NULL);
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
@@ -525,20 +520,15 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
 	}else if(ctx->content_range.end + 1 < ctx->content_range.total){
 		r->headers_out.content_length_n = ctx->range.end - ctx->range.start + 1;
-		v = r->headers_out.content_length_n;
-		while(v){
-			size += 1;
-			v /= 10;
-		}
-		content_length.data = ngx_palloc(r->pool, size);
-		ngx_sprintf(content_length.data, "%ud", r->headers_out.content_length_n);
-		content_length.len = size;
+		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
+		content_length.len = ngx_sprintf(content_length.data, "%ui", r->headers_out.content_length_n)
+							 - content_length.data;
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length, NULL);
 
 		size = 0;
-		size += sizeof("bytes -/") - 1 + 3 * NGX_OFF_T_LEN;
+		size += sizeof("bytes -/") - 1 + 3 * NGX_SIZE_T_LEN;
 		content_range.data = ngx_palloc(r->pool, size);
-		content_range.len = ngx_sprintf(content_range.data, "bytes %O-%O/%O",
+		content_range.len = ngx_sprintf(content_range.data, "bytes %ui-%ui/%ui",
 				ctx->range.start, ctx->range.end, ctx->content_range.total) - content_range.data;
 
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_range_key, content_range, NULL);
@@ -549,48 +539,6 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	ctx->offset = ctx->content_range.end + 1;
     return ngx_http_next_header_filter(r);
 }
-/*static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_t *in){
-	ngx_http_subrange_filter_ctx_t *ctx, *sctx;
-	ngx_int_t rc;
-
-	sctx = NULL;
-
-	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
-	if(in == NULL || in->buf->pos == NULL ||
-			ctx == NULL || !ctx->touched){
-		return ngx_http_next_body_filter(r, in);
-	}
-	if(ctx->content_range.end + 1 == ctx->content_range.total){
-		ngx_http_send_special(r->main, NGX_HTTP_LAST);
-		return ngx_http_next_body_filter(r, in);
-	}
-	if(r != r->main){
-		sctx = ngx_http_get_module_ctx(r, ngx_http_subrange_filter_module);
-		if(sctx == NULL || sctx->processed){
-			return ngx_http_next_body_filter(r, in);
-		}
-		ngx_http_send_special(r->main, NGX_HTTP_LAST);
-		if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
-			return NGX_ERROR;
-		}
-		return ngx_http_next_body_filter(r, in);
-		sctx->processed = 1;
-	}
-	else{
-		rc = ngx_http_next_body_filter(r, in);
-		if(rc != NGX_OK){
-			return rc;
-		}
-		if(ctx->processed){
-			return NGX_OK;
-		}
-		if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
-			return NGX_ERROR;
-		}
-		ctx->processed = 1;
-	}
-	return NGX_OK;
-}*/
 static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_t *in){
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ngx_chain_t *cl;
