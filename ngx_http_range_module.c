@@ -210,7 +210,8 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 	val   = 0;
 	total = 0;
 
-	part = &r->upstream->headers_in.headers.part;
+	//part = &r->upstream->headers_in.headers.part;
+	part = &r->headers_out.headers.part;
 	h = part->elts;
 	for(i = 0;/* void */; ++i){
 		if(i >= part->nelts){
@@ -223,6 +224,7 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		}
 		if(ngx_strncasecmp((u_char *)"content-range",h[i].lowcase_key,h[i].key.len)==0){
 			h = &h[i];
+			break;
 		}
 	}
 
@@ -366,7 +368,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	uri = r->uri;
 	args = r->args;
 	//flags = NGX_HTTP_SUBREQUEST_IN_MEMORY|NGX_HTTP_SUBREQUEST_WAITED;
-	flags = 0;
+	flags = NGX_HTTP_SUBREQUEST_WAITED;
 	if(ngx_http_subrequest(r, &uri, &args, &sr, &ngx_http_subrange_post_subrequest_handler, flags)==NGX_ERROR){
 		return NGX_ERROR;
 	}
@@ -547,6 +549,11 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
 	if(r != r->main || ctx == NULL || !ctx->touched){
+		if(ctx && ctx->done){
+			/*nginx set last_buf to 0 if this is a subrequest , fix it to send not buffer the last subrequest*/
+			for (cl = in; cl->next; cl = cl->next){/* void */}
+			cl->buf->last_buf = 1;
+		}
 		return ngx_http_next_body_filter(r, in);
 	}
 	last = 0;
@@ -556,13 +563,21 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			cl->buf->last_buf = 0;
 			cl->buf->sync = 1;
 			last = 1;
+			break;
 		}   
 	}
 	rc = ngx_http_next_body_filter(r, in);
-	if(rc != NGX_OK){
+	if(rc == NGX_ERROR || !last){
 		return rc;
 	}
-	if(!ctx->processed && last){
+
+	/*last == 1 or NGX_OK or NGX_AGAIN*/
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: p:%ui,last:%ui",ctx->processed, last);
+	if(!ctx->processed){
+		/*if there is only one request , we should set ctx->done to 1*/
+		if(ctx->content_range.end + 1 >= ctx->content_range.total){
+			ctx->done = 1;
+		}
 		if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 			return NGX_ERROR;
 		}
