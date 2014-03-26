@@ -418,6 +418,10 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 	rstart = 0;
 	rend   = 0;
 
+	/*Only support GET or POST*/
+	if(!r->method & (NGX_HTTP_GET | NGX_HTTP_POST)){
+		return NGX_DECLINED;
+	}
 	rlcf = ngx_http_get_module_loc_conf(r, ngx_http_range_module);
 	if(rlcf->size == NGX_CONF_UNSET || rlcf->size == 0){
 		return NGX_DECLINED;
@@ -499,7 +503,6 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		return ngx_http_next_header_filter(r);
 	}
 	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT ||
-	   r->http_version < NGX_HTTP_VERSION_10 ||
 	   r->headers_out.content_length_n == -1)
 	{
 		if(r == r->main){
