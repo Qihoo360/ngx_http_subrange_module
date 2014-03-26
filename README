@@ -1,1 +1,15 @@
-This is README
+ngx_http_range_module  
+Split one big download file request to multiple subrange request to avoid get too
+much data from upstream at a time.
+
+Directive:
+syntax : subrange size
+default: subrange 0 , 0 means disable
+context: http, server, location
+
+Example:
+  location /{
+	root html;
+	subrange 10k;
+  }
+
