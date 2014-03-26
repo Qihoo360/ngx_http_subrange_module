@@ -111,6 +111,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_uint_t touched:1;       /*request has been touched by this module*/
 	ngx_uint_t processed:1;     /*subrequest has been processed*/
 	ngx_uint_t done:1;     /*subrequest has been processed*/
+	ngx_uint_t subrequest_done:1;     /*subrequest has been processed*/
 }ngx_http_subrange_filter_ctx_t;
 
 static ngx_http_post_subrequest_t ngx_http_subrange_post_subrequest_handler = 
@@ -403,6 +404,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 		sr->header_in = r->header_in;
 	}
 	ctx->sn += 1;
+	ctx->subrequest_done = 0;
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
@@ -430,6 +432,7 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 	ctx->processed = 0; //the request/subrequest has been processed
 	ctx->done = 0;  // all subrequest done 
 	ctx->sn = 0;    // subrange sequence number
+	ctx->subrequest_done = 0; //the request/subrequest has been processed
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
 	if(r == r->main){
@@ -499,9 +502,17 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	   r->http_version < NGX_HTTP_VERSION_10 ||
 	   r->headers_out.content_length_n == -1)
 	{
-		ctx->touched = 0; //upstream do not support subrange , untouch the request
+		if(r == r->main){
+			ctx->touched = 0; //upstream do not support subrange , untouch the request
+		}else if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT){
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: subrequest error ,terminate request");
+			ctx->done = 1; //some errors occur, finish the request;
+			r->main->connection->error = 1; // terminal the main request forcely
+		}
 		return ngx_http_next_header_filter(r);
 	}
+	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: p:%d,t:%d,d:%d,sd:%d",
+			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done);
 	if(!ctx->range_request){
 		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
 	}
@@ -539,6 +550,8 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	}
 	if(ctx->content_range.end + 1 == ctx->content_range.total){
 		ctx->done = 1;
+		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: request done e:%ui,l:%ui",
+				ctx->content_range.end, ctx->content_range.total);
 		return ngx_http_next_header_filter(r);
 	}
 	ctx->offset = ctx->content_range.end + 1;
@@ -550,65 +563,65 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	ngx_int_t rc, last;
 
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
-	if(r != r->main || ctx == NULL || !ctx->touched){
+	if(ctx == NULL || !ctx->touched){
+		return ngx_http_next_body_filter(r, in);
+	}
+	ngx_log_debug5(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%d,t:%d,d:%d,sd:%d,c:%p",
+			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done, in);
+	if(r == r->main){
+		if(ctx->subrequest_done && !ctx->done){
+			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
+				return NGX_ERROR;
+			}
+			return ngx_http_next_body_filter(r, in);
+		}
+		last = 0;
+
+		for (cl = in; cl; cl = cl->next) {
+			if (cl->buf->last_buf) {
+				cl->buf->last_buf = 0;
+				cl->buf->sync = 1;
+				cl->buf->flush = 1;
+				last = 1;
+				break;
+			}   
+		}
+		rc = ngx_http_next_body_filter(r, in);
+		if(rc == NGX_ERROR || !last || ctx->done){
+			return rc;
+		}
+		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%ui,last:%ui",ctx->processed, last);
+		if(!ctx->processed){
+			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
+				return NGX_ERROR;
+			}
+			ctx->processed = 1;
+		}
+		return NGX_OK;
+
+	}else{
+		/*send last buf(nginx will set cl->buf->last_buf = 0 if it is a subrequest,we fix that)*/
 		if(ctx && ctx->done && in){
-			/*nginx set last_buf to 0 if this is a subrequest , fix it to send not buffer the last subrequest*/
-			for (cl = in; cl->next; cl = cl->next){/* void */}
+			for(cl = in; cl->next; cl = cl->next){/*void*/}
 			cl->buf->last_buf = 1;
 		}
 		return ngx_http_next_body_filter(r, in);
 	}
-	last = 0;
-
-	for (cl = in; cl; cl = cl->next) {
-		if (cl->buf->last_buf) {
-			cl->buf->last_buf = 0;
-			cl->buf->sync = 1;
-			cl->buf->flush = 1;
-			last = 1;
-			break;
-		}   
-	}
-	rc = ngx_http_next_body_filter(r, in);
-	if(rc == NGX_ERROR || !last || ctx->done){
-		return rc;
-	}
-
-	/*last == 1 or NGX_OK or NGX_AGAIN*/
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: p:%ui,last:%ui",ctx->processed, last);
-	if(!ctx->processed){
-		/*if there is only one request , we should set ctx->done to 1*/
-		/*if(ctx->content_range.end + 1 >= ctx->content_range.total){
-			ctx->done = 1;
-		}*/
-		if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
-			return NGX_ERROR;
-		}
-		ctx->processed = 1;
-	}
-	return NGX_OK;
 }
 static  ngx_int_t ngx_http_subrange_post_subrequest(ngx_http_request_t *r, void *data, ngx_int_t rc){
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
-	if(rc != NGX_OK){
+	if(rc != NGX_OK && rc != NGX_AGAIN){
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange post subrequest :error of subrequest rc:%i", rc);
 		return rc;
 	}
 	if(ctx == NULL){
 		return NGX_ERROR;
 	}
-	if(ctx->done){
-		return NGX_OK;
+	if(r != r->main){
+		ctx->subrequest_done = 1;
 	}
-	/*if(ctx->content_range.end + 1 >= ctx->content_range.total){
-		ctx->done = 1;
-		r->post_subrequest = NULL;
-		return NGX_OK; 
-	}*/
-	if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
-		return NGX_ERROR;
-	}
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: post subrequest:c:%ui,rc:%i",r->main->count, rc);
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange post subrequest:c:%ui,rc:%i",r->main->count, rc);
 	r->post_subrequest = NULL;
 	return NGX_OK;
 }
