@@ -435,7 +435,7 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 	ctx->touched = 0; // the request has been split to subrange request
 	ctx->processed = 0; //the request/subrequest has been processed
 	ctx->done = 0;  // all subrequest done 
-	ctx->sn = 0;    // subrange sequence number
+	ctx->sn = 1;    // subrange sequence number
 	ctx->subrequest_done = 0; //the request/subrequest has been processed
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
