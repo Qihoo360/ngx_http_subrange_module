@@ -395,7 +395,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 		range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, ctx->offset + rlcf->size - 1)
 			- range_value.data;
 		ngx_http_subrange_set_header(sr, &sr->headers_in.headers, range_key, range_value, &hdr);
-		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: subrequest:%ud subrange:%i-%i",
+		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: subrequest:%ud subrange:%i-%i",
 				ctx->sn, ctx->offset, ctx->offset + rlcf->size -1);
 		if(hdr){
 			sr->headers_in.range = hdr;
@@ -569,14 +569,17 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	if(ctx == NULL || !ctx->touched){
 		return ngx_http_next_body_filter(r, in);
 	}
-	ngx_log_debug5(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%d,t:%d,d:%d,sd:%d,c:%p",
-			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done, in);
+	ngx_log_debug7(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%d,t:%d,d:%d,sd:%d,c:%p,r:%p,b:%d",
+			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done, in, r, r->connection->buffered);
 	if(r == r->main){
-		if(ctx->subrequest_done && !ctx->done){
-			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
-				return NGX_ERROR;
+		if(ctx->subrequest_done && !ctx->done && !r->connection->buffered){
+			rc = ngx_http_next_body_filter(r, in);
+			if(in == NULL && rc == NGX_OK){
+				if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
+					return NGX_ERROR;
+				}
 			}
-			return ngx_http_next_body_filter(r, in);
+			return rc;
 		}
 		last = 0;
 
@@ -590,15 +593,19 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			}   
 		}
 		rc = ngx_http_next_body_filter(r, in);
-		if(rc == NGX_ERROR || !last || ctx->done){
+		ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d,last:%d, rc:%d, b:%d",
+				ctx->processed, last, rc, r->connection->buffered);
+		if(rc == NGX_ERROR || rc == NGX_AGAIN || ctx->done){
 			return rc;
 		}
-		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%ui,last:%ui",ctx->processed, last);
-		if(!ctx->processed){
+		/* NGX_OK */
+		if(in == NULL && rc == NGX_OK){
+			last = 1; //FIXME find a better method
+		}
+		if(!r->connection->buffered && last){
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
 			}
-			ctx->processed = 1;
 		}
 		return NGX_OK;
 
@@ -608,7 +615,10 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			for(cl = in; cl->next; cl = cl->next){/*void*/}
 			cl->buf->last_buf = 1;
 		}
-		return ngx_http_next_body_filter(r, in);
+		rc = ngx_http_next_body_filter(r, in);
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: subrequest after next body filter:rc:%d",
+				rc);
+		return rc;
 	}
 }
 static  ngx_int_t ngx_http_subrange_post_subrequest(ngx_http_request_t *r, void *data, ngx_int_t rc){
