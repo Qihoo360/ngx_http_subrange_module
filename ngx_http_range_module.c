@@ -174,9 +174,20 @@ static ngx_int_t ngx_http_subrange_parse(ngx_http_request_t *r, ngx_http_subrang
 
 	u_char *p, c;
 	ngx_uint_t start, end, val, len, i;
+	ngx_uint_t found_s, found_e;
+	enum parse_state{
+		R_NONE,
+		R_START,
+		R_END,
+		R_FIN,
+	} state;
+
 	start = 0;
 	end = 0;
 	val = 0;
+
+	state = R_NONE;
+
 	p = r->headers_in.range->value.data;
 	len = r->headers_in.range->value.len;
 
@@ -184,10 +195,23 @@ static ngx_int_t ngx_http_subrange_parse(ngx_http_request_t *r, ngx_http_subrang
 	for(i = 0; i < len; ++i){
 		c = p[i];
 		if(c >= '0' && c <= '9'){
+			if(state == R_NONE){
+				state = R_START;
+			}
+			if(state == R_END){
+				state = R_FIN;
+			}
 			val = val*10+(c-'0');
 		}
 		if(c == '-'){
-			start = val;
+			if(state == R_START){
+				start = val;
+				state = R_END;
+			}
+			if(state == R_NONE){
+				start = (ngx_uint_t)-1;
+				state = R_END;
+			}
 			val = 0;
 		}
 		if(c == ','){
@@ -195,7 +219,12 @@ static ngx_int_t ngx_http_subrange_parse(ngx_http_request_t *r, ngx_http_subrang
 			break;
 		}
 	}
-	end = val;
+	if(state == R_FIN){
+		end = val;
+	}
+	if(state == R_END){
+		end = (ngx_uint_t)-1;
+	}
 	range->start = start;
 	range->end= end;
 	return NGX_OK;
@@ -251,6 +280,11 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 	range->start = start;
 	range->end = end;
 	range->total = total;
+	if(ctx->range.end == (ngx_uint_t)-1){
+		ctx->range.end = total - 1;	
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: set range end boundary:%ui",
+				ctx->range.end);
+	}
 }
 static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t *headers, ngx_str_t key, ngx_str_t val,
 		ngx_table_elt_t **hdr){
@@ -468,10 +502,14 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 		if(ngx_http_subrange_parse(r, ctx, &ctx->range)!= NGX_OK){
 			return NGX_ERROR;
 		}
+		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: parse range s:%ui,e:%ui",
+				ctx->range.start, ctx->range.end);
 		ctx->offset = ctx->range.start;
 		if(ctx->range.end > ctx->offset + rlcf->size){
 			r->headers_in.range->value = ngx_http_subrange_get_range(r, ctx->offset, ctx->offset + rlcf->size -1);
 			ctx->touched = 1;
+		}else{
+			return NGX_DECLINED;
 		}
 	}
 	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: mainrequest subrange:%i-%i",
