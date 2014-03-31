@@ -504,6 +504,9 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 		}
 		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange filter: parse range s:%ui,e:%ui",
 				ctx->range.start, ctx->range.end);
+		if(ctx->range.start == (ngx_uint_t)-1){
+			return NGX_DECLINED;
+		}
 		ctx->offset = ctx->range.start;
 		if(ctx->range.end > ctx->offset + rlcf->size){
 			r->headers_in.range->value = ngx_http_subrange_get_range(r, ctx->offset, ctx->offset + rlcf->size -1);
