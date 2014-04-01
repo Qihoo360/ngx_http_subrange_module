@@ -16,19 +16,19 @@
  * 3.Fix r->connection->write->delayed and set to 0 if all the data are sent actually
  * */
 
-static ngx_int_t ngx_http_range_init(ngx_conf_t *cf);
+static ngx_int_t ngx_http_subrange_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf);
-static void * ngx_http_range_create_loc_conf(ngx_conf_t *cf);
-static char * ngx_http_range_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static void * ngx_http_subrange_create_loc_conf(ngx_conf_t *cf);
+static char * ngx_http_subrange_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
-static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r);
 static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_t *in);
 static ngx_int_t ngx_http_subrange_post_subrequest(ngx_http_request_t *r, void *data, ngx_int_t rc);
 
-static ngx_command_t ngx_http_range_commands[] = { 
+static ngx_command_t ngx_http_subrange_commands[] = { 
 	{ ngx_string("subrange"),
 		NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,               
 		ngx_conf_set_size_slot,
@@ -38,9 +38,9 @@ static ngx_command_t ngx_http_range_commands[] = {
 	ngx_null_command
 };
 
-static ngx_http_module_t ngx_http_range_module_ctx = {
+static ngx_http_module_t ngx_http_subrange_module_ctx = {
 	NULL,                                  /* preconfiguration */
-	ngx_http_range_init,                   /* postconfiguration */
+	ngx_http_subrange_init,                   /* postconfiguration */
 
 	NULL,                                  /* create main configuration */
 	NULL,                                  /* init main configuration */
@@ -48,14 +48,14 @@ static ngx_http_module_t ngx_http_range_module_ctx = {
 	NULL,                                  /* create server configuration */
 	NULL,                                  /* merge server configuration */
 
-	ngx_http_range_create_loc_conf,        /* create location configuration */
-	ngx_http_range_merge_loc_conf          /* merge location configuration */
+	ngx_http_subrange_create_loc_conf,        /* create location configuration */
+	ngx_http_subrange_merge_loc_conf          /* merge location configuration */
 };
 
-ngx_module_t ngx_http_range_module = {
+ngx_module_t ngx_http_subrange_module = {
 	NGX_MODULE_V1,
-	&ngx_http_range_module_ctx,            /* module context */
-	ngx_http_range_commands,               /* module directives */
+	&ngx_http_subrange_module_ctx,            /* module context */
+	ngx_http_subrange_commands,               /* module directives */
 	NGX_HTTP_MODULE,                       /* module type */
 	NULL,                                  /* init master */
 	NULL,                                  /* init module */
@@ -102,9 +102,9 @@ ngx_module_t ngx_http_subrange_filter_module = {
 #define NGX_DEFAULT_RANGE_SIZE 524288 //512*1024
 #define NGX_RANGE_KEY "Range"
 #define NGX_RANGE_KEY_SIZE sizeof(NGX_RANGE_KEY)
-typedef struct ngx_http_range_loc_conf_s{
+typedef struct ngx_http_subrange_loc_conf_s{
 	ngx_int_t size;
-}ngx_http_range_loc_conf_t;
+}ngx_http_subrange_loc_conf_t;
 
 typedef struct ngx_http_subrange_s{
 	ngx_uint_t start;
@@ -140,7 +140,7 @@ static ngx_str_t ngx_http_status_lines[] = {
 	ngx_null_string,  /* terminated */
 };
 
-static ngx_int_t ngx_http_range_init(ngx_conf_t *cf){
+static ngx_int_t ngx_http_subrange_init(ngx_conf_t *cf){
 	ngx_http_handler_pt             *h;
 	ngx_http_core_main_conf_t       *cmcf;
 	cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
@@ -148,7 +148,7 @@ static ngx_int_t ngx_http_range_init(ngx_conf_t *cf){
 	if(h == NULL){
 		return NGX_ERROR;
 	}
-	*h = ngx_http_range_set_header_handler;
+	*h = ngx_http_subrange_set_header_handler;
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf){
@@ -160,17 +160,17 @@ static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf){
 	return NGX_OK;
 }
 
-static void * ngx_http_range_create_loc_conf(ngx_conf_t *cf){
-	ngx_http_range_loc_conf_t *rlcf;
-	rlcf = ngx_palloc(cf->pool, sizeof(ngx_http_range_loc_conf_t));
+static void * ngx_http_subrange_create_loc_conf(ngx_conf_t *cf){
+	ngx_http_subrange_loc_conf_t *rlcf;
+	rlcf = ngx_palloc(cf->pool, sizeof(ngx_http_subrange_loc_conf_t));
 	if(rlcf == NULL){
 		return NULL;
 	}
 	rlcf->size = NGX_CONF_UNSET;
 	return rlcf;
 }
-static char * ngx_http_range_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child){
-	ngx_http_range_loc_conf_t *prev,*conf;
+static char * ngx_http_subrange_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child){
+	ngx_http_subrange_loc_conf_t *prev,*conf;
 	prev = parent;
 	conf = child;
 	ngx_conf_merge_value(conf->size, prev->size, 0);
@@ -404,7 +404,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ngx_str_t range_key = ngx_string("Range");
 	ngx_str_t range_value;
 	ngx_int_t size;
-	ngx_http_range_loc_conf_t *rlcf;
+	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_table_elt_t *hdr;
 
 	uri = r->uri;
@@ -429,7 +429,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 		if(sr->headers_in.headers.last == &r->headers_in.headers.part){
 			sr->headers_in.headers.last = &sr->headers_in.headers.part;
 		}
-		rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_range_module);
+		rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_subrange_module);
 		size = sizeof("bytes=-") + 2*NGX_SIZE_T_LEN;
 		range_value.data = ngx_palloc(sr->pool, size);
 		range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, ctx->offset + rlcf->size - 1)
@@ -447,9 +447,9 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ctx->subrequest_done = 0;
 	return NGX_OK;
 }
-static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
+static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ngx_table_elt_t *h,**ph;
-	ngx_http_range_loc_conf_t *rlcf;
+	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ngx_http_subrange_t subrange, range;
 	ngx_int_t rstart,rend;
@@ -462,7 +462,7 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 	if(!r->method & (NGX_HTTP_GET | NGX_HTTP_POST)){
 		return NGX_DECLINED;
 	}
-	rlcf = ngx_http_get_module_loc_conf(r, ngx_http_range_module);
+	rlcf = ngx_http_get_module_loc_conf(r, ngx_http_subrange_module);
 	if(rlcf->size == NGX_CONF_UNSET || rlcf->size == 0){
 		return NGX_DECLINED;
 	}
@@ -527,7 +527,7 @@ static ngx_int_t ngx_http_range_set_header_handler(ngx_http_request_t *r){
 }
 static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	ngx_int_t rstart,rend,rtotal,size;
-	ngx_http_range_loc_conf_t *rlcf;
+	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ngx_str_t content_length;
 	ngx_str_t content_length_key = ngx_string("Content-Length");
@@ -541,7 +541,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	rend   = 0;
 	size   = 0;
 
-	rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_range_module);
+	rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_subrange_module);
 	if(rlcf->size == NGX_CONF_UNSET ||  rlcf->size == 0){
 		return ngx_http_next_header_filter(r);
 	}
@@ -564,7 +564,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: p:%d,t:%d,d:%d,sd:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done);
 	if(!ctx->range_request){
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
+		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_subrange_filter_module
 	}
 	ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range);
 	/*Get the content range, and update the progress*/
@@ -578,7 +578,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length,NULL);
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
+		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_subrange_filter_module
 		r->headers_out.content_range = NULL;
 		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
