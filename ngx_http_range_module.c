@@ -2,6 +2,21 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+/*
+ * This module is used to split a normal http request to multiple Range request to upstreams
+ * We do this by modifing the http header and adding the Range header to issue multiple range reqeusts.
+ * This is insensitive to client. 
+ *
+ * We send the output of main request first which is different from the default behavior that 
+ * at last. So there is three problems we should pay attention to:
+ * 1.We should clear the buf->last_buf flag after the main request because this is not the last 
+ *   buffer in our case. 
+ * 2.Set buf->last_buf of the last subrequest's last buf. Nginx do not set buf->last_buf of 
+ *   subrequest.
+ * 3.Fix the delayed flag(r->connection->write->delayed). Nginx may leave the delayed flag to 1
+ *   after the main request because nginx thinks there is no data following and the request structure
+ *   will be destroyed.
+ * */
 
 static ngx_int_t ngx_http_range_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf);
@@ -57,7 +72,7 @@ ngx_module_t ngx_http_range_module = {
 
 static ngx_http_module_t ngx_http_subrange_filter_module_ctx = {
 	NULL,                                  /* preconfiguration */
-	ngx_http_subrange_filter_init,                   /* postconfiguration */
+	ngx_http_subrange_filter_init,         /* postconfiguration */
 
 	NULL,                                  /* create main configuration */
 	NULL,                                  /* init main configuration */
@@ -646,6 +661,22 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 		if(!r->connection->buffered && last){
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
+			}
+			/*Fix the delayed flag
+			 *This is required because delayed flag is likely to be left as value 1 after the main request finish.
+			 *There is no problem if we output the main request response as usual after all subrequests.
+			 *But here , we send all output of main request before subrequests, so the delayed flag should be fixed in 
+			 *case of blocking the subrequest's output.
+			 *This can occur as follow:
+			 * 1. The main request sends all the response , and leave the value of delayed to 1
+			 * 2. The first subrequest is created and outputed, at the same time , the r->buffered is set(Ex. sendfile off).
+			 * 3. Nginx do not give the control to main request but choose to set the ngx_http_writer handler 
+			 *    to output the buffered data.
+			 * 4. The ngx_http_writer handler is failed to set becuase of the delayed flag , but there is no 
+			 *	  delayed data actually(refer to ngx_http_set_write_handler)
+			 * */
+			if(r->main->subrequests == 255){ // the first subrequest
+				r->connection->write->delayed = 0;
 			}
 		}
 		return NGX_OK;
