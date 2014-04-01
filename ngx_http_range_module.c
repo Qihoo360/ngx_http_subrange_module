@@ -13,9 +13,8 @@
  *   buffer in our case. 
  * 2.Set buf->last_buf of the last subrequest's last buf. Nginx do not set buf->last_buf of 
  *   subrequest.
- * 3.Fix the delayed flag(r->connection->write->delayed). Nginx may leave the delayed flag to 1
- *   after the main request because nginx thinks there is no data following and the request structure
- *   will be destroyed.
+ * 3.Create subrequest after the delayed(r->connection->write->delayed) flag is set to 0 by 
+ *   ngx_http_writer otherwise it will block the request for failing to add event.
  * */
 
 static ngx_int_t ngx_http_range_init(ngx_conf_t *cf);
@@ -612,7 +611,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_t *in){
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ngx_chain_t *cl;
-	ngx_int_t rc, last;
+	ngx_int_t rc;
 
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
 	if(ctx == NULL || !ctx->touched){
@@ -621,55 +620,25 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	ngx_log_debug7(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%d,t:%d,d:%d,sd:%d,c:%p,r:%p,b:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done, in, r, r->connection->buffered);
 	if(r == r->main){
-		if(ctx->subrequest_done && !ctx->done && !r->connection->buffered){
-			rc = ngx_http_next_body_filter(r, in);
-			if(in == NULL && rc == NGX_OK){
-				if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
-					return NGX_ERROR;
-				}
-			}
-			return rc;
-		}
-		last = 0;
-
 		for (cl = in; cl; cl = cl->next) {
 			if (cl->buf->last_buf) {
 				cl->buf->last_buf = 0;
 				cl->buf->sync = 1;
 				cl->buf->flush = 1;
-				last = 1;
+				ctx->subrequest_done = 1;
 				break;
 			}   
 		}
 		rc = ngx_http_next_body_filter(r, in);
-		ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d,last:%d, rc:%d, b:%d",
-				ctx->processed, last, rc, r->connection->buffered);
+		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d",
+				ctx->processed, rc, r->connection->buffered);
 		if(rc == NGX_ERROR || rc == NGX_AGAIN || ctx->done){
 			return rc;
 		}
 		/* NGX_OK */
-		if(in == NULL && rc == NGX_OK){
-			last = 1; //FIXME find a better way 
-		}
-		if(!r->connection->buffered && last){
+		if(!r->connection->buffered && ctx->subrequest_done){
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
-			}
-			/*Fix the delayed flag
-			 *This is required because delayed flag is likely to be left as value 1 after the main request finish.
-			 *There is no problem if we output the main request response as usual after all subrequests.
-			 *But here , we send all output of main request before subrequests, so the delayed flag should be fixed in 
-			 *case of blocking the subrequest's output.
-			 *This can occur as follow:
-			 * 1. The main request sends all the response , and leave the value of delayed to 1
-			 * 2. The first subrequest is created and outputed, at the same time , the r->buffered is set(Ex. sendfile off).
-			 * 3. Nginx do not give the control to main request but choose to set the ngx_http_writer handler 
-			 *    to output the buffered data.
-			 * 4. The ngx_http_writer handler is failed to set becuase of the delayed flag , but there is no 
-			 *	  delayed data actually(refer to ngx_http_set_write_handler)
-			 * */
-			if(r->main->subrequests == 255){ // the first subrequest
-				r->connection->write->delayed = 0;
 			}
 		}
 		return NGX_OK;
@@ -681,7 +650,7 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			cl->buf->last_buf = 1;
 		}
 		rc = ngx_http_next_body_filter(r, in);
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: subrequest after next body filter:rc:%d",
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: after next body filter:rc:%d",
 				rc);
 		return rc;
 	}
