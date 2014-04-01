@@ -20,7 +20,6 @@
 
 static ngx_int_t ngx_http_range_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf);
-static char * ngx_http_range_subrange(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static void * ngx_http_range_create_loc_conf(ngx_conf_t *cf);
 static char * ngx_http_range_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
@@ -163,11 +162,6 @@ static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf){
 	return NGX_OK;
 }
 
-static char * ngx_http_range_subrange(ngx_conf_t *cf, ngx_command_t *cmd, void *conf){
-	ngx_http_range_loc_conf_t *rlcf;
-
-	return NULL;
-}
 static void * ngx_http_range_create_loc_conf(ngx_conf_t *cf){
 	ngx_http_range_loc_conf_t *rlcf;
 	rlcf = ngx_palloc(cf->pool, sizeof(ngx_http_range_loc_conf_t));
@@ -417,7 +411,6 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 
 	uri = r->uri;
 	args = r->args;
-	//flags = NGX_HTTP_SUBREQUEST_IN_MEMORY|NGX_HTTP_SUBREQUEST_WAITED;
 	flags = NGX_HTTP_SUBREQUEST_WAITED;
 	if(ngx_http_subrequest(r, &uri, &args, &sr, &ngx_http_subrange_post_subrequest_handler, flags)==NGX_ERROR){
 		return NGX_ERROR;
@@ -656,7 +649,7 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 		}
 		/* NGX_OK */
 		if(in == NULL && rc == NGX_OK){
-			last = 1; //FIXME find a better method
+			last = 1; //FIXME find a better way 
 		}
 		if(!r->connection->buffered && last){
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
