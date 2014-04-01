@@ -13,8 +13,7 @@
  *   buffer in our case. 
  * 2.Set buf->last_buf of the last subrequest's last buf. Nginx do not set buf->last_buf of 
  *   subrequest.
- * 3.Create subrequest after the delayed(r->connection->write->delayed) flag is set to 0 by 
- *   ngx_http_writer otherwise it will block the request for failing to add event.
+ * 3.Fix r->connection->write->delayed and set to 0 if all the data are sent actually
  * */
 
 static ngx_int_t ngx_http_range_init(ngx_conf_t *cf);
@@ -630,13 +629,23 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			}   
 		}
 		rc = ngx_http_next_body_filter(r, in);
-		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d",
-				ctx->processed, rc, r->connection->buffered);
+		ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d, d:%d",
+				ctx->processed, rc, r->connection->buffered,r->connection->write->delayed);
 		if(rc == NGX_ERROR || rc == NGX_AGAIN || ctx->done){
 			return rc;
 		}
 		/* NGX_OK */
 		if(!r->connection->buffered && ctx->subrequest_done){
+			/*All data has been sent actually, remove the timer event and the delayed flag
+			 *or sometimes it may invoke some unexpected handler
+			 * */
+			if(r->connection->write->delayed){
+				if(r->connection->write->timer_set){
+					ngx_del_timer(r->connection->write);
+					r->connection->write->delayed = 0;
+				}
+			}
+
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
 			}
