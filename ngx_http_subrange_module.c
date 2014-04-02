@@ -598,7 +598,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_range_key, content_range, NULL);
 		ctx->done = 0;
 	}
-	if(ctx->content_range.end + 1 == ctx->content_range.total){
+	if(ctx->content_range.end + 1 >= ctx->content_range.total){
 		ctx->done = 1;
 		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: request done e:%ui,l:%ui",
 				ctx->content_range.end, ctx->content_range.total);
