@@ -480,7 +480,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
 	if(r == r->main){
-		if(r->internal){ //internal redirect main request, Range has been added
+		if(r->internal && r->headers_in.range){ //internal redirect main request, Range has been added
 			return NGX_DECLINED;
 		}
 	}
