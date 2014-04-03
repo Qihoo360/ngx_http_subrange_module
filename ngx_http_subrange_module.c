@@ -181,7 +181,6 @@ static ngx_int_t ngx_http_subrange_parse(ngx_http_request_t *r, ngx_http_subrang
 
 	u_char *p, c;
 	ngx_uint_t start, end, val, len, i;
-	ngx_uint_t found_s, found_e;
 	enum parse_state{
 		R_NONE,
 		R_START,
@@ -292,12 +291,13 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: set range end boundary:%ui",
 				ctx->range.end);
 	}
+	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t *headers, ngx_str_t key, ngx_str_t val,
 		ngx_table_elt_t **hdr){
 	ngx_list_part_t *part;
 	ngx_table_elt_t *h;
-	ngx_int_t i;
+	ngx_uint_t i;
 	part = &headers->part;
 	h = part->elts;
 	for(i = 0;/**/; ++i){
@@ -334,10 +334,11 @@ static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t 
 static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key){
 	ngx_list_part_t *part, *prev;
 	ngx_table_elt_t *h;
-	ngx_int_t i,j;
+	ngx_uint_t i,j;
 
 	part = &headers->part;
 	h = part->elts;
+	prev = NULL;
 	for(i = 0;/* void */; ++i){
 		if(i >= part->nelts){
 			if(part->next == NULL){
@@ -448,10 +449,9 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
-	ngx_table_elt_t *h,**ph;
+	ngx_table_elt_t *h;
 	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_subrange_filter_ctx_t *ctx;
-	ngx_http_subrange_t subrange, range;
 	ngx_int_t rstart,rend;
 	ngx_str_t key = ngx_string("Range");
 
@@ -459,7 +459,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	rend   = 0;
 
 	/*Only support GET or POST*/
-	if(!r->method & (NGX_HTTP_GET | NGX_HTTP_POST)){
+	if(!(r->method & (NGX_HTTP_GET | NGX_HTTP_POST))){
 		return NGX_DECLINED;
 	}
 	rlcf = ngx_http_get_module_loc_conf(r, ngx_http_subrange_module);
@@ -534,7 +534,6 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	ngx_str_t range_key = ngx_string("Range");
 	ngx_str_t content_range_key = ngx_string("Content-Range");
 	ngx_str_t content_range;
-	ngx_int_t v,rc;
 
 	rstart = 0;
 	rtotal = 0;
