@@ -118,6 +118,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_uint_t sn;				/*sequence number of subrequest*/
 	ngx_http_subrange_t range;
 	ngx_http_subrange_t content_range;
+	ngx_http_request_t *r;
 	ngx_uint_t range_request:1; /*Is this original a range request*/
 	ngx_uint_t singlepart:1;    /*Is this a single part range, we only process single part range request now*/
 	ngx_uint_t touched:1;       /*request has been touched by this module*/
@@ -446,6 +447,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	}
 	ctx->sn += 1;
 	ctx->subrequest_done = 0;
+	ctx->r = sr;
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
@@ -470,6 +472,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	if(ctx == NULL){
 		return NGX_ERROR;
 	}
+	ctx->r = r;
 	ctx->range_request = 0;
 	ctx->offset = 0;
 	ctx->touched = 0; // the request has been split to subrange request
@@ -643,6 +646,11 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 					ngx_del_timer(r->connection->write);
 					r->connection->write->delayed = 0;
 				}
+			}
+			/*clean up temporary files*/
+			if(ctx->r->upstream->pipe->temp_file->file.fd != NGX_INVALID_FILE){
+				ngx_pool_run_cleanup_file(ctx->r->pool, ctx->r->upstream->pipe->temp_file->file.fd);
+				ctx->r->upstream->pipe->temp_file->file.fd = NGX_INVALID_FILE;
 			}
 
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
