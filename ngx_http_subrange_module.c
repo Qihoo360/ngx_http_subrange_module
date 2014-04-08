@@ -371,21 +371,7 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 	ngx_str_t p = ngx_string("bytes=");
 	ngx_int_t size,v;
 
-	size  = p.len;
-	for(v = start; v; v = v/10){
-		size += 1;
-	}
-	if(start == 0){
-		size += 1;
-	}
-	size += 1; //add the size of '-' between range
-	for(v = offset; v; v = v/10){
-		size += 1;
-	}
-	if(offset == 0){
-		size += 1;
-	}
-	size += 1; // for '\0' it is required by nginx range filter
+	size  = p.len + 2*NGX_SIZE_T_LEN + 1;
 	data = ngx_palloc(r->pool, size);
 	if(!data){
 		range.len = 0;
@@ -393,9 +379,8 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 		return range;
 	}
 	range.data = data;
-	range.len = size - 1;
-	range.data[size] = '\0';
-	ngx_snprintf(range.data, range.len, "bytes=%ud-%ud", start, offset);
+	range.len = ngx_snprintf(range.data, range.len, "bytes=%ud-%ud", start, offset)
+		- range.data;
 	return range;
 }
 static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
@@ -516,6 +501,10 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 		if(ctx->range.start == (ngx_uint_t)-1){
 			return NGX_DECLINED;
 		}
+		/*Do not support multipart ranges*/
+		if(ctx->singlepart == 0){
+			return NGX_DECLINED;
+		}
 		ctx->offset = ctx->range.start;
 		if(ctx->range.end > ctx->offset + rlcf->size){
 			r->headers_in.range->value = ngx_http_subrange_get_range(r, ctx->offset, ctx->offset + rlcf->size -1);
@@ -551,23 +540,22 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	if(ctx == NULL || !ctx->touched){
 		return ngx_http_next_header_filter(r);
 	}
-	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT ||
-	   r->headers_out.content_length_n == -1)
+	if(r->headers_out.content_length_n == -1){
+		return ngx_http_next_header_filter(r);
+	}
+	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT)
 	{
 		if(r == r->main){
 			ctx->touched = 0; //upstream do not support subrange , untouch the request
-		}else if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT){
+		}else{
 			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: subrequest error ,terminate request");
 			ctx->done = 1; //some errors occur, finish the request;
-			r->main->connection->error = 1; // terminal the main request forcely
+			r->main->connection->error = 1; // terminate the main request forcely
 		}
 		return ngx_http_next_header_filter(r);
 	}
 	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: p:%d,t:%d,d:%d,sd:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done);
-	if(!ctx->range_request){
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_subrange_filter_module
-	}
 	ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range);
 	/*Get the content range, and update the progress*/
 	if(r == r->main && !ctx->range_request){
@@ -580,7 +568,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length,NULL);
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_subrange_filter_module
+		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
 		r->headers_out.content_range = NULL;
 		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
