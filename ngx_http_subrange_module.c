@@ -367,9 +367,9 @@ static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key)
 }
 static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t start, ngx_int_t offset){
 	u_char *data;
-	ngx_str_t range;
+	ngx_str_t range = ngx_null_string;
 	ngx_str_t p = ngx_string("bytes=");
-	ngx_int_t size,v;
+	ngx_int_t size;
 
 	size  = p.len + 2*NGX_SIZE_T_LEN + 1;
 	data = ngx_palloc(r->pool, size);
