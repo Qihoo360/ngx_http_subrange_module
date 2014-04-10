@@ -330,7 +330,7 @@ static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t 
 	h->lowcase_key = ngx_palloc(r->pool, h->key.len);
 	ngx_strlow(h->lowcase_key, h->key.data, h->key.len);
 	h->hash = ngx_hash_key(h->lowcase_key, h->key.len);
-	return NGX_ERROR;
+	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key){
 	ngx_list_part_t *part, *prev;
@@ -612,7 +612,6 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 		for (cl = in; cl; cl = cl->next) {
 			if (cl->buf->last_buf) {
 				cl->buf->last_buf = 0;
-				cl->buf->sync = 1;
 				cl->buf->flush = 1;
 				ctx->subrequest_done = 1;
 				break;
