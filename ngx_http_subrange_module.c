@@ -379,7 +379,7 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 		return range;
 	}
 	range.data = data;
-	range.len = ngx_snprintf(range.data, range.len, "bytes=%ud-%ud", start, offset)
+	range.len = ngx_sprintf(range.data, "bytes=%ud-%ud", start, offset)
 		- range.data;
 	return range;
 }
