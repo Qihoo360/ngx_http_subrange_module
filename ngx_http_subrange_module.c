@@ -3,12 +3,12 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 /*
- * This module is used to split a normal http request to multiple Range request to upstreams
- * We do this by modifing the http header and adding the Range header to issue multiple range reqeusts.
+ * This module is used to split a normal http request to multiple Range requests to upstreams
+ * We do this by modifing the http header and adding the Range header to issue multiple range subreqeusts.
  * This is insensitive to client. 
  *
  * We send the output of main request first which is different from the default behavior that 
- * at last. So there is three problems we should pay attention to:
+ * at last. So there are three problems we should pay attention to:
  * 1.We should clear the buf->last_buf flag after the main request because this is not the last 
  *   buffer in our case. 
  * 2.Set buf->last_buf of the last subrequest's last buf. Nginx do not set buf->last_buf of 
@@ -20,6 +20,7 @@ static ngx_int_t ngx_http_subrange_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf);
 static void * ngx_http_subrange_create_loc_conf(ngx_conf_t *cf);
 static char * ngx_http_subrange_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static char * ngx_http_subrange_subrange_cmd(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 
@@ -31,7 +32,7 @@ static ngx_int_t ngx_http_subrange_post_subrequest(ngx_http_request_t *r, void *
 static ngx_command_t ngx_http_subrange_commands[] = { 
 	{ ngx_string("subrange"),
 		NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,               
-		ngx_conf_set_size_slot,
+		ngx_http_subrange_subrange_cmd,
 		NGX_HTTP_LOC_CONF_OFFSET,      
 		0,
 		NULL },
@@ -96,14 +97,13 @@ ngx_module_t ngx_http_subrange_filter_module = {
 };
 
 /*------------- the api implements ------------*/
-#define NGX_HTTP_RANGE_ON   0x01;
-#define NGX_HTTP_RANGE_OFF  0x02;
-#define NGX_HTTP_RANGE_AUTO 0x04;
-#define NGX_DEFAULT_RANGE_SIZE 524288 //512*1024
-#define NGX_RANGE_KEY "Range"
-#define NGX_RANGE_KEY_SIZE sizeof(NGX_RANGE_KEY)
+typedef struct ngx_http_subrange_script_s{
+	ngx_array_t *lengths;
+	ngx_array_t *values;
+}ngx_http_subrange_script_t;
 typedef struct ngx_http_subrange_loc_conf_s{
 	ngx_int_t size;
+	ngx_http_subrange_script_t *script;
 }ngx_http_subrange_loc_conf_t;
 
 typedef struct ngx_http_subrange_s{
@@ -161,6 +161,50 @@ static ngx_int_t ngx_http_subrange_filter_init(ngx_conf_t *cf){
 	return NGX_OK;
 }
 
+static char * ngx_http_subrange_subrange_cmd(ngx_conf_t *cf, ngx_command_t *cmd, void *conf){
+	ngx_str_t *value;
+	ngx_uint_t n;
+	ngx_http_script_compile_t sc;
+	ngx_http_subrange_loc_conf_t *slcf;
+	ngx_array_t *lengths, *values;
+
+	lengths = NULL;
+	values = NULL;
+	slcf = conf;
+
+	value = cf->args->elts;
+
+	n = ngx_http_script_variables_count(&value[1]); 
+	if(n == 0){
+		return ngx_conf_set_size_slot(cf, cmd, conf);
+	}else{
+		if(slcf->script != NULL){
+			return "is duplicated";
+		}
+		slcf->script = ngx_pcalloc(cf->pool, sizeof(ngx_http_subrange_script_t));
+		if(slcf->script == NULL){
+			return NGX_CONF_ERROR;
+		}
+		/*
+		 * slcf->script->lengths = NULL;
+		 * slcf->script->values = NULL;
+		 * set by ngx_pcalloc
+		 * */
+		ngx_memzero(&sc, sizeof(ngx_http_script_compile_t));	
+		sc.cf = cf;
+		sc.source = &value[1];
+		sc.variables = n;
+		sc.lengths = &slcf->script->lengths;
+		sc.values = &slcf->script->values;
+		sc.complete_lengths = 1;
+		sc.complete_values = 1;
+		slcf->size = NGX_CONF_UNSET;
+		if(ngx_http_script_compile(&sc) != NGX_OK){
+			return NGX_CONF_ERROR;
+		}
+	}
+	return NGX_CONF_OK;
+}
 static void * ngx_http_subrange_create_loc_conf(ngx_conf_t *cf){
 	ngx_http_subrange_loc_conf_t *rlcf;
 	rlcf = ngx_palloc(cf->pool, sizeof(ngx_http_subrange_loc_conf_t));
@@ -168,6 +212,7 @@ static void * ngx_http_subrange_create_loc_conf(ngx_conf_t *cf){
 		return NULL;
 	}
 	rlcf->size = NGX_CONF_UNSET;
+	rlcf->script = NULL;
 	return rlcf;
 }
 static char * ngx_http_subrange_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child){
@@ -175,6 +220,10 @@ static char * ngx_http_subrange_merge_loc_conf(ngx_conf_t *cf, void *parent, voi
 	prev = parent;
 	conf = child;
 	ngx_conf_merge_value(conf->size, prev->size, 0);
+	if(conf->script == NULL){
+		conf->script = prev->script;
+	}
+
 	return NGX_CONF_OK;
 }
 static ngx_int_t ngx_http_subrange_parse(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t
@@ -442,6 +491,9 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ngx_int_t rstart,rend;
 	ngx_str_t key = ngx_string("Range");
 
+	ngx_str_t subrange;
+	size_t size;
+
 	rstart = 0;
 	rend   = 0;
 
@@ -450,6 +502,19 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 		return NGX_DECLINED;
 	}
 	rlcf = ngx_http_get_module_loc_conf(r, ngx_http_subrange_module);
+	if(rlcf->script){
+		if(ngx_http_script_run(r, &subrange, rlcf->script->lengths->elts, 0, rlcf->script->values->elts)
+				== NULL){
+			ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "http subrange module: subrange variable get failed, subrange disabled");
+			return NGX_DECLINED;
+		}
+		size = ngx_parse_size(&subrange);
+		if(size == (size_t) NGX_ERROR){
+			ngx_log_error(NGX_LOG_WARN, r->connection->log, 0, "http subrange module: subrange value parse failed, subrange disabled");
+			return NGX_DECLINED;
+		}
+		rlcf->size = size;
+	}
 	if(rlcf->size == NGX_CONF_UNSET || rlcf->size == 0){
 		return NGX_DECLINED;
 	}
