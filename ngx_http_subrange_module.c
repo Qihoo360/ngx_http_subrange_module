@@ -292,6 +292,12 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: set range end boundary:%ui",
 				ctx->range.end);
 	}
+	/*fix the wrong end boundary if it occurs*/
+	if(range->end >= range->total){
+		range->end = total - 1;
+	}
+	ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: parse content range:%ui-%ui/%ui",
+			range->start, ctx->range.end, range->total);
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t *headers, ngx_str_t key, ngx_str_t val,
@@ -572,7 +578,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		r->headers_out.content_range = NULL;
 		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
-	}else if(ctx->content_range.end + 1 < ctx->content_range.total){
+	}else{
 		r->headers_out.content_length_n = ctx->range.end - ctx->range.start + 1;
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", r->headers_out.content_length_n)
@@ -586,7 +592,6 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 				ctx->range.start, ctx->range.end, ctx->content_range.total) - content_range.data;
 
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_range_key, content_range, NULL);
-		ctx->done = 0;
 	}
 	if(ctx->content_range.end + 1 >= ctx->content_range.total){
 		ctx->done = 1;
