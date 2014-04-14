@@ -40,7 +40,7 @@ static ngx_command_t ngx_http_subrange_commands[] = {
 
 static ngx_http_module_t ngx_http_subrange_module_ctx = {
 	NULL,                                  /* preconfiguration */
-	ngx_http_subrange_init,                   /* postconfiguration */
+	ngx_http_subrange_init,                /* postconfiguration */
 
 	NULL,                                  /* create main configuration */
 	NULL,                                  /* init main configuration */
@@ -48,14 +48,14 @@ static ngx_http_module_t ngx_http_subrange_module_ctx = {
 	NULL,                                  /* create server configuration */
 	NULL,                                  /* merge server configuration */
 
-	ngx_http_subrange_create_loc_conf,        /* create location configuration */
-	ngx_http_subrange_merge_loc_conf          /* merge location configuration */
+	ngx_http_subrange_create_loc_conf,     /* create location configuration */
+	ngx_http_subrange_merge_loc_conf       /* merge location configuration */
 };
 
 ngx_module_t ngx_http_subrange_module = {
 	NGX_MODULE_V1,
-	&ngx_http_subrange_module_ctx,            /* module context */
-	ngx_http_subrange_commands,               /* module directives */
+	&ngx_http_subrange_module_ctx,         /* module context */
+	ngx_http_subrange_commands,            /* module directives */
 	NGX_HTTP_MODULE,                       /* module type */
 	NULL,                                  /* init master */
 	NULL,                                  /* init module */
@@ -241,12 +241,12 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 	ngx_list_part_t *part;
 	ngx_table_elt_t *h;
 	u_char *p, c;
-	ngx_uint_t start, end, val, total, len, i;
+	ngx_uint_t start, end, val, total, len, i, found;
 	start = 0;
 	end   = 0;
 	val   = 0;
 	total = 0;
-
+	found = 0;
 	//part = &r->upstream->headers_in.headers.part;
 	part = &r->headers_out.headers.part;
 	h = part->elts;
@@ -261,8 +261,12 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		}
 		if(ngx_strncasecmp((u_char *)"content-range",h[i].lowcase_key,h[i].key.len)==0){
 			h = &h[i];
+			found = 1;
 			break;
 		}
+	}
+	if(found == 0){
+		return NGX_ERROR;
 	}
 
 	p = h->value.data;
@@ -546,10 +550,8 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	if(ctx == NULL || !ctx->touched){
 		return ngx_http_next_header_filter(r);
 	}
-	if(r->headers_out.content_length_n == -1){
-		return ngx_http_next_header_filter(r);
-	}
-	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT)
+	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT ||
+			r->headers_out.content_length_n == -1)
 	{
 		if(r == r->main){
 			ctx->touched = 0; //upstream do not support subrange , untouch the request
@@ -562,7 +564,11 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	}
 	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: p:%d,t:%d,d:%d,sd:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done);
-	ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range);
+	if(ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range) != NGX_OK){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: miss content range ,terminate request");
+		ctx->done = 1; //do not found the content-range header,output and finish the request, maybe accept-ranges is none
+		return ngx_http_next_header_filter(r);
+	}
 	/*Get the content range, and update the progress*/
 	if(r == r->main && !ctx->range_request){
 		r->headers_out.status = NGX_HTTP_OK; //Change 206 to 200
