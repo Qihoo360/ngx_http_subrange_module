@@ -112,6 +112,15 @@ typedef struct ngx_http_subrange_s{
 	ngx_uint_t total;
 }ngx_http_subrange_t;
 
+typedef struct ngx_http_subrange_checkpoint_s{
+	ngx_pool_t *pool;				/*pool element */
+	ngx_pool_t *current;		    /*pool->current*/
+	ngx_chain_t *chain;		        /*pool->chain*/
+	ngx_pool_large_t *large;        /*large malloc */
+	ngx_pool_cleanup_t *pcleanup;   /*poll cleanup handler*/
+	ngx_http_cleanup_t *cleanup;    /*http cleanup handler*/
+}ngx_http_subrange_checkpoint_t;
+
 typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_uint_t offset;
 	ngx_uint_t total;
@@ -119,6 +128,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_http_subrange_t range;
 	ngx_http_subrange_t content_range;
 	ngx_http_request_t *r;
+	ngx_http_subrange_checkpoint_t checkpoint;
 	ngx_uint_t range_request:1; /*Is this original a range request*/
 	ngx_uint_t singlepart:1;    /*Is this a single part range, we only process single part range request now*/
 	ngx_uint_t touched:1;       /*request has been touched by this module*/
@@ -393,6 +403,92 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 		- range.data;
 	return range;
 }
+static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
+	ngx_pool_t *p, *pool;
+	ngx_pool_large_t *large, *lghdr;
+	ngx_http_cleanup_t *cln;
+	ngx_http_subrange_checkpoint_t *cp;
+
+	/*make a checkpoint, record the last pool elements, large alloc, and cleanup handlers*/
+	r = r->main;
+	pool = r->pool;
+	cp = &ctx->checkpoint;
+
+	for(p = pool->current; p && p->d.next; p = p->d.next){/*void*/}
+
+	cp->current = pool->current;
+	cp->chain = pool->chain;
+	cp->pool = p;
+	cp->large = pool->large;
+	cp->pcleanup = pool->cleanup;
+	cp->cleanup = r->cleanup;
+
+	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: checkpoint p:%p, l:%p,pc:%p,c:%p" ,
+			cp->pool, cp->large, cp->pcleanup, cp->cleanup);
+	return NGX_OK;
+}
+/* The recovery routine will run the cleanup handler and free all the memory after checkpoint
+ * It is due to the caller to guarantee safe(Ex. resouce or memory will be never used later)
+ * */
+static ngx_int_t ngx_http_subrange_recovery(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
+	ngx_http_cleanup_t *cln;
+	ngx_pool_cleanup_t *pcln;
+	ngx_pool_large_t *large;
+	ngx_pool_t *p, *pool;
+	ngx_http_subrange_checkpoint_t *cp;
+
+	r = r->main;
+	cln = r->cleanup;
+	cp = &ctx->checkpoint;
+	pool = r->pool;
+	p = cp->pool->d.next;
+	if(p){
+		while(cln && cln != cp->cleanup){
+			if(cln->handler){
+				cln->handler(cln->data);
+			}
+			cln = cln->next;
+			r->main->cleanup = cln;
+		}
+
+		p->large = NULL; /*suppress ngx_destroy_pool*/
+		p->cleanup = NULL; /*suppress ngx_destroy_pool*/
+		
+		large = pool->large;
+		while(large && large != cp->large){
+			if(large->alloc){
+				ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+									   "free: %p", large->alloc);
+				ngx_free(large->alloc);
+				large->alloc = NULL;
+			}
+			large = large->next;
+			pool->large = large;
+		}
+		pcln = pool->cleanup;
+		while(pcln && pcln != cp->pcleanup){
+			if(pcln->handler){
+				ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+										   "run cleanup: %p", pcln);
+				pcln->handler(pcln->data);
+			}
+			pcln = pcln->next;
+			pool->cleanup = pcln;
+		}
+
+		p->log = pool->log;
+		ngx_destroy_pool(p);
+
+		cp->pool->d.next = NULL; 
+		pool->current = cp->current;
+		pool->chain = cp->chain;
+
+		ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+								   "run recovery: %p", pool->chain);
+		pool->chain = NULL;
+	}
+	return NGX_OK;
+}
 static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
 	ngx_str_t uri;
 	ngx_str_t args;
@@ -402,11 +498,17 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ngx_str_t range_value;
 	ngx_int_t size;
 	ngx_http_subrange_loc_conf_t *rlcf;
+	ngx_http_core_srv_conf_t *cscf;
 	ngx_table_elt_t *hdr;
+	ngx_pool_t *current, *p;
+	ngx_pool_large_t *large, *lghead;
+	ngx_http_cleanup_t *cln;
 
 	uri = r->uri;
 	args = r->args;
 	flags = NGX_HTTP_SUBREQUEST_WAITED;
+	cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
+
 	if(ngx_http_subrequest(r, &uri, &args, &sr, &ngx_http_subrange_post_subrequest_handler, flags)==NGX_ERROR){
 		return NGX_ERROR;
 	}
@@ -475,6 +577,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ctx->done = 0;  // all subrequest done 
 	ctx->sn = 1;    // subrange sequence number
 	ctx->subrequest_done = 0; //the request/subrequest has been processed
+	ngx_memzero(&ctx->checkpoint, sizeof(ngx_http_subrange_checkpoint_t));
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
 	if(r == r->main){
@@ -612,6 +715,7 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ngx_chain_t *cl;
 	ngx_int_t rc;
+	ngx_buf_t *b;
 
 	ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
 	if(ctx == NULL || !ctx->touched){
@@ -646,11 +750,21 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 				}
 			}
 			/*clean up temporary files*/
-			if(ctx->r->upstream->pipe->temp_file->file.fd != NGX_INVALID_FILE){
+			/*if(ctx->r->upstream->pipe->temp_file->file.fd != NGX_INVALID_FILE){
 				ngx_pool_run_cleanup_file(ctx->r->pool, ctx->r->upstream->pipe->temp_file->file.fd);
 				ctx->r->upstream->pipe->temp_file->file.fd = NGX_INVALID_FILE;
+			}*/
+			/*recovey to last checkpoint*/
+			if(ctx->checkpoint.pool && r->main->out == NULL){
+				if(ngx_http_subrange_recovery(r, ctx) != NGX_OK){
+					return NGX_ERROR;
+				}
 			}
-
+			/*make a checkpoint before create the next subrequest*/
+			if(ngx_http_subrange_checkpoint(r, ctx) != NGX_OK){
+				return NGX_ERROR;
+			}
+			/*now, create the next subrequest*/
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
 			}
@@ -662,6 +776,9 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 		if(ctx && ctx->done && in){
 			for(cl = in; cl->next; cl = cl->next){/*void*/}
 			cl->buf->last_buf = 1;
+		}else if(in){
+			for(cl = in; cl->next; cl = cl->next){/*void*/}
+			cl->buf->flush = 1; /*FIXME do not flush too often*/
 		}
 		rc = ngx_http_next_body_filter(r, in);
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: after next body filter:rc:%d",
