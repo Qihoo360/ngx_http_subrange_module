@@ -405,8 +405,6 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 }
 static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
 	ngx_pool_t *p, *pool;
-	ngx_pool_large_t *large, *lghdr;
-	ngx_http_cleanup_t *cln;
 	ngx_http_subrange_checkpoint_t *cp;
 
 	/*make a checkpoint, record the last pool elements, large alloc, and cleanup handlers*/
@@ -500,9 +498,6 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_core_srv_conf_t *cscf;
 	ngx_table_elt_t *hdr;
-	ngx_pool_t *current, *p;
-	ngx_pool_large_t *large, *lghead;
-	ngx_http_cleanup_t *cln;
 
 	uri = r->uri;
 	args = r->args;
