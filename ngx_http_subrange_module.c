@@ -749,11 +749,6 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 					r->connection->write->delayed = 0;
 				}
 			}
-			/*clean up temporary files*/
-			/*if(ctx->r->upstream->pipe->temp_file->file.fd != NGX_INVALID_FILE){
-				ngx_pool_run_cleanup_file(ctx->r->pool, ctx->r->upstream->pipe->temp_file->file.fd);
-				ctx->r->upstream->pipe->temp_file->file.fd = NGX_INVALID_FILE;
-			}*/
 			/*recovey to last checkpoint*/
 			if(ctx->checkpoint.pool && r->main->out == NULL){
 				if(ngx_http_subrange_recovery(r, ctx) != NGX_OK){
