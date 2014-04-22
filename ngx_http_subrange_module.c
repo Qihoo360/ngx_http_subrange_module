@@ -148,6 +148,7 @@ static ngx_str_t ngx_http_status_lines[] = {
 	ngx_string("204 No Content"),
 	ngx_null_string,  /* "205 Reset Content" */
 	ngx_string("206 Partial Content"),
+	ngx_string("502 Bad Gateway"),
 	ngx_null_string,  /* terminated */
 };
 
@@ -311,7 +312,7 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		range->end = total - 1;
 	}
 	ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: parse content range:%ui-%ui/%ui",
-			range->start, ctx->range.end, range->total);
+			range->start, range->end, range->total);
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t *headers, ngx_str_t key, ngx_str_t val,
@@ -666,6 +667,14 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: miss content range ,terminate request");
 		ctx->done = 1; //do not found the content-range header,output and finish the request, maybe accept-ranges is none
 		return ngx_http_next_header_filter(r);
+	}
+	if(ctx->content_range.start > ctx->content_range.end){
+		ngx_log_error(NGX_LOG_ERR, r->connection->log,0, "http subrange header filter: content range invalid,s:%d,e:%d,t:%d",
+				ctx->content_range.start, ctx->content_range.end, ctx->content_range.total);
+		ctx->done = 1;
+		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
+		ngx_http_clear_content_length(r)
+		return NGX_HTTP_BAD_GATEWAY;
 	}
 	/*Get the content range, and update the progress*/
 	if(r == r->main && !ctx->range_request){
