@@ -43,7 +43,7 @@ def test(func):
 
 def http_download_get_request(uri, hdrs = {}):
 	conn = HTTPConnection('localhost',8804)
-	conn.set_debuglevel(0)
+	conn.set_debuglevel(1)
 	conn.request("GET", uri, '',hdrs)
 	resp = conn.getresponse()
 	return resp
@@ -134,6 +134,14 @@ def test_illegal_range_header(uri):
 	tassert(resp)
 	tassertEqual(resp.status, 416)
 
+@test
+def test_range_request(uri):
+	hdrs = {"Range":"Bytes=0-%d"%(1024*1024*2)}
+	resp = http_download_get_request(uri, hdrs)
+	tassert(resp)
+	tassert(len(resp.read()),1024*1024*2);
+	tassertEqual(resp.status, 206)
+
 if __name__ == '__main__':
 	test_absent_content_length(uricgi)
 	test_absent_content_range(uricgi)
@@ -142,6 +150,7 @@ if __name__ == '__main__':
 	test_return_200_ok(uricgi)
 	test_return_500_error(uricgi)
 	test_normal(uricgi)
+	test_range_request(uricgi)
 
 	test_absent_range_start(uriproxy)
 	test_absent_range_end(uriproxy)

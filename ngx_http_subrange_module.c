@@ -308,7 +308,7 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 				ctx->range.end);
 	}
 	/*fix the wrong end boundary if it occurs*/
-	if(range->end >= range->total){
+	if(range->end > 0 && range->end >= range->total){
 		range->end = total - 1;
 	}
 	ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: parse content range:%ui-%ui/%ui",
@@ -373,7 +373,7 @@ static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key)
 		}
 		if(ngx_strncasecmp(key.data, h[i].lowcase_key, h[i].key.len) == 0){
 			if(part->nelts == 1){ //just skip if we have one header in the part
-				prev->next = part->next;
+				part->nelts = 0;
 				break;
 			}
 			j = i + 1;
@@ -496,6 +496,7 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ngx_str_t range_key = ngx_string("Range");
 	ngx_str_t range_value;
 	ngx_int_t size;
+	ngx_uint_t end;
 	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_core_srv_conf_t *cscf;
 	ngx_table_elt_t *hdr;
@@ -527,11 +528,22 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 		rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_subrange_module);
 		size = sizeof("bytes=-") + 2*NGX_SIZE_T_LEN;
 		range_value.data = ngx_palloc(sr->pool, size);
-		range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, ctx->offset + rlcf->size - 1)
-			- range_value.data;
+
+		end = ctx->offset + rlcf->size - 1;
+		if(ctx->range.end && ctx->range_request && 
+				end > ctx->range.end){
+			end = ctx->range.end;
+			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
+				- range_value.data;
+			ctx->done = 1;
+			//ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "subrange test here end:%i, %s",ctx->range.end, range_value.data);
+		}else{
+			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
+				- range_value.data;
+		}
 		ngx_http_subrange_set_header(sr, &sr->headers_in.headers, range_key, range_value, &hdr);
 		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: subrequest:%ud subrange:%i-%i",
-				ctx->sn, ctx->offset, ctx->offset + rlcf->size -1);
+				ctx->sn, ctx->offset, end);
 		if(hdr){
 			sr->headers_in.range = hdr;
 		}
