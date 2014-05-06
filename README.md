@@ -12,7 +12,7 @@ default: subrange 0 , 0 means disable
 context: http, server, location
 ```
 
-*Example:* 
+Example: 
 ---------
 ```
   location /{  
