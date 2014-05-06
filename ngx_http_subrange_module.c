@@ -536,7 +536,6 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
 				- range_value.data;
 			ctx->done = 1;
-			//ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "subrange test here end:%i, %s",ctx->range.end, range_value.data);
 		}else{
 			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
 				- range_value.data;
