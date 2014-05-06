@@ -5,12 +5,18 @@ Split one big download file request to multiple subrange requests to avoid getin
 much data from upstream at one time.
 
 Directive:
+---------
+```
 syntax : subrange size
 default: subrange 0 , 0 means disable
 context: http, server, location
+```
 
-Example:
-  location /{
-	  root html;
-	  subrange 10k;
+*Example:* 
+---------
+```
+  location /{  
+    root html;  
+    subrange 10k;  
   }
+```
