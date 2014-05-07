@@ -482,8 +482,8 @@ static ngx_int_t ngx_http_subrange_recovery(ngx_http_request_t *r, ngx_http_subr
 		pool->current = cp->current;
 		pool->chain = cp->chain;
 
-		ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
-								   "run recovery: %p", pool->chain);
+		ngx_log_debug3(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+								   "http subrange run recovery: p:%p, c:%p, l:%p",cp->pool, pool->chain, pool->large);
 		pool->chain = NULL;
 	}
 	return NGX_OK;
@@ -747,8 +747,8 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			}   
 		}
 		rc = ngx_http_next_body_filter(r, in);
-		ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d, d:%d",
-				ctx->processed, rc, r->connection->buffered,r->connection->write->delayed);
+		ngx_log_debug6(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d, d:%d, o:%p, cp:%p",
+				ctx->processed, rc, r->connection->buffered,r->connection->write->delayed, r->out, ctx->checkpoint.pool);
 		if(rc == NGX_ERROR || rc == NGX_AGAIN || ctx->done){
 			return rc;
 		}
@@ -785,9 +785,10 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 		if(ctx && ctx->done && in){
 			for(cl = in; cl->next; cl = cl->next){/*void*/}
 			cl->buf->last_buf = 1;
-		}else if(in){
-			for(cl = in; cl->next; cl = cl->next){/*void*/}
-			cl->buf->flush = 1; /*FIXME do not flush too often*/
+		}else if(in){/*check the special buf (refer to ngx_http_send_special)*/
+			if(in && in->buf->last_in_chain){
+				in->buf->flush = 1;
+			}
 		}
 		rc = ngx_http_next_body_filter(r, in);
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: after next body filter:rc:%d",
