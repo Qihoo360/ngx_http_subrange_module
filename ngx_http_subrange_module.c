@@ -787,7 +787,7 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			cl->buf->last_buf = 1;
 		}else if(in){
 			for(cl = in; cl->next; cl = cl->next){/*void*/}
-			//cl->buf->flush = 1; /*FIXME do not flush too often*/
+			cl->buf->flush = 1; /*FIXME do not flush too often*/
 		}
 		rc = ngx_http_next_body_filter(r, in);
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: after next body filter:rc:%d",
