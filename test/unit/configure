@@ -1,0 +1,154 @@
+#!/bin/bash
+OUTPUT=Makefile
+NGINX_PATH=${NGINX_PATH:-"nginx-1.0.2"}
+CFLAGS=${CFLAGS:-"-g -O0 -Wall"}
+
+COLOR_OK="\033[94mOK\033[0m"
+COLOR_FAILED="\033[91mFAILED\033[0m"
+
+printf 'checking for NGINX_PATH ...'
+if [ ! -d "$NGINX_PATH" ]
+then
+	echo -e $COLOR_FAILED
+	echo "  Please set NGINX_PATH correctly, got:$NGINX_PATH"
+	exit
+fi
+echo -e $COLOR_OK
+
+printf 'patching nginx.c ...'
+#cp $NGINX_PATH/src/core/nginx.c $NGINX_PATH/src/core/nginx.c.bak
+sed s/main\(/main2\(/ $NGINX_PATH/src/core/nginx.c > $NGINX_PATH/src/core/nginx_test.c
+if [ $? -ne 0 ]
+then
+	echo -e $COLOR_FAILED
+	echo "  Replace main( by main2( failed"
+	exit
+fi
+echo -e $COLOR_OK
+
+printf 'configring nginx ...'
+cd $NGINX_PATH
+./configure $*
+if [ $? -ne 0 ]
+then
+	echo -e $COLOR_FAILED
+	echo "  run $NGINX_PATH/configure failed"
+	exit
+fi
+cd -
+echo -e $COLOR_OK
+
+printf 'checking for nginx Makefile ...'
+if [ ! -f "$NGINX_PATH/objs/Makefile" ]
+then
+	echo -e $COLOR_FAILED
+	echo "  Please run configure of $NGINX_PATH first"
+	exit
+fi
+echo -e $COLOR_OK
+
+#cd $NGINX_PATH
+#echo 'compile nginx ...'
+#make -j4 -f objs/Makefile.test
+#if [ $? -ne 0 ]
+#then
+#	echo -e $COLOR_FAILED
+#	echo "run make failed"
+#	exit
+#fi
+#cd -
+#echo -e $COLOR_OK
+
+printf 'checking for nginx make state...'
+if [ ! -e "$NGINX_PATH/src/core/ngx_config.h" ]
+then
+	echo -e $COLOR_FAILED
+	echo "  Please run make of $NGINX_PATH first"
+	exit
+fi
+echo -e $COLOR_OK
+
+#Parse nginx's Makefile , and get all the srcs, deps, and objects
+printf 'parsing for nginx Makefile ...'
+cat "$NGINX_PATH/objs/Makefile" | awk '{
+	if($1=="LINK" && $2 == "=" ){
+		print "LINK = echo > objs/nginx.test"
+	}else if($1 == "src/core/nginx.c"){
+		print "src/core/nginx_test.c"
+	}else{
+		print
+	}
+}' > $NGINX_PATH/objs/Makefile.test
+cat "$NGINX_PATH/objs/Makefile" | awk -v NGX="$NGINX_PATH" '
+BEGIN{
+	printf "NGINX=%s\n\n",NGX
+}
+$1 == "ALL_INCS", $NF != "\\"{
+	for(i = 1; i <= NF; ++i){
+		if($i == "-I"){
+			if($1 == "ALL_INCS"){
+				printf "ALL_INCS= -I $(NGINX)/%s", $(i+1)
+			}
+			else{
+				printf "\t  -I $(NGINX)/%s ",$(i+1)
+			}
+			break
+		}
+	}
+	if($NF == "\\"){
+		printf " \\\n"
+	}else{
+		printf "\n\n"
+	}
+}
+
+$1 == "CORE_DEPS", $NF != "\\"{
+	#print
+}
+$1 == "CORE_INCS", $NF != "\\"{
+	#print
+}
+$1 == "HTTP_DEPS", $NF != "\\"{
+	#print
+}
+$1 == "HTTP_INCS", $NF != "\\"{
+	#print
+}
+$1 == "objs/nginx:", $NF != "\\"{
+	if($1 == "objs/nginx:"){
+		printf "ALL_OBJS = $(NGINX)/%s \\\n", $2
+		next
+	}
+
+	printf "\t   $(NGINX)/%s", $1
+
+	if($NF == "\\"){
+		printf " \\\n"
+	}else{
+		printf "\n\n"
+	}
+} 
+$1 == "$(LINK)", $NF != "\\"{
+	if($NF != "\\"){
+		printf "LINKOPTS = %s\n\n",$0
+	}
+}
+' > $OUTPUT
+echo -e $COLOR_OK
+
+printf "generating Makefile ..."
+echo "CFLAGS=$CFLAGS" >> $OUTPUT
+cat <<'DOC' >> $OUTPUT
+
+all:test_subrange
+
+test_subrange:test_subrange.c $(NGINX)/objs/nginx.test
+	gcc $(CFLAGS) $(ALL_INCS) -o test_subrange test_subrange.c $(ALL_OBJS) $(LINKOPTS)
+$(NGINX)/objs/nginx.test:
+	cd $(NGINX) && make -f objs/Makefile.test -j4
+
+clean:
+	rm -rf test_subrange Makefile
+	cd $(NGINX) && make clean
+DOC
+echo -e $COLOR_OK

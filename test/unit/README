@@ -1,0 +1,5 @@
+Compile:
+
+1. export NGINX_PATH=/path/to/nginx
+2. ./configure [nginx configure options]
+3. make

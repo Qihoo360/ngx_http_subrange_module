@@ -41,7 +41,7 @@ static ngx_command_t ngx_http_subrange_commands[] = {
 
 static ngx_http_module_t ngx_http_subrange_module_ctx = {
 	NULL,                                  /* preconfiguration */
-	ngx_http_subrange_init,                   /* postconfiguration */
+	ngx_http_subrange_init,                /* postconfiguration */
 
 	NULL,                                  /* create main configuration */
 	NULL,                                  /* init main configuration */
@@ -49,14 +49,14 @@ static ngx_http_module_t ngx_http_subrange_module_ctx = {
 	NULL,                                  /* create server configuration */
 	NULL,                                  /* merge server configuration */
 
-	ngx_http_subrange_create_loc_conf,        /* create location configuration */
-	ngx_http_subrange_merge_loc_conf          /* merge location configuration */
+	ngx_http_subrange_create_loc_conf,     /* create location configuration */
+	ngx_http_subrange_merge_loc_conf       /* merge location configuration */
 };
 
 ngx_module_t ngx_http_subrange_module = {
 	NGX_MODULE_V1,
-	&ngx_http_subrange_module_ctx,            /* module context */
-	ngx_http_subrange_commands,               /* module directives */
+	&ngx_http_subrange_module_ctx,         /* module context */
+	ngx_http_subrange_commands,            /* module directives */
 	NGX_HTTP_MODULE,                       /* module type */
 	NULL,                                  /* init master */
 	NULL,                                  /* init module */
@@ -112,6 +112,15 @@ typedef struct ngx_http_subrange_s{
 	ngx_uint_t total;
 }ngx_http_subrange_t;
 
+typedef struct ngx_http_subrange_checkpoint_s{
+	ngx_pool_t *pool;				/*pool element */
+	ngx_pool_t *current;		    /*pool->current*/
+	ngx_chain_t *chain;		        /*pool->chain*/
+	ngx_pool_large_t *large;        /*large malloc */
+	ngx_pool_cleanup_t *pcleanup;   /*poll cleanup handler*/
+	ngx_http_cleanup_t *cleanup;    /*http cleanup handler*/
+}ngx_http_subrange_checkpoint_t;
+
 typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_uint_t offset;
 	ngx_uint_t total;
@@ -119,6 +128,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_http_subrange_t range;
 	ngx_http_subrange_t content_range;
 	ngx_http_request_t *r;
+	ngx_http_subrange_checkpoint_t checkpoint;
 	ngx_uint_t range_request:1; /*Is this original a range request*/
 	ngx_uint_t singlepart:1;    /*Is this a single part range, we only process single part range request now*/
 	ngx_uint_t touched:1;       /*request has been touched by this module*/
@@ -138,6 +148,7 @@ static ngx_str_t ngx_http_status_lines[] = {
 	ngx_string("204 No Content"),
 	ngx_null_string,  /* "205 Reset Content" */
 	ngx_string("206 Partial Content"),
+	ngx_string("502 Bad Gateway"),
 	ngx_null_string,  /* terminated */
 };
 
@@ -290,12 +301,12 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 	ngx_list_part_t *part;
 	ngx_table_elt_t *h;
 	u_char *p, c;
-	ngx_uint_t start, end, val, total, len, i;
+	ngx_uint_t start, end, val, total, len, i, found;
 	start = 0;
 	end   = 0;
 	val   = 0;
 	total = 0;
-
+	found = 0;
 	//part = &r->upstream->headers_in.headers.part;
 	part = &r->headers_out.headers.part;
 	h = part->elts;
@@ -310,8 +321,12 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		}
 		if(ngx_strncasecmp((u_char *)"content-range",h[i].lowcase_key,h[i].key.len)==0){
 			h = &h[i];
+			found = 1;
 			break;
 		}
+	}
+	if(found == 0){
+		return NGX_ERROR;
 	}
 
 	p = h->value.data;
@@ -341,6 +356,12 @@ static ngx_int_t ngx_http_subrange_parse_content_range(ngx_http_request_t *r, ng
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: set range end boundary:%ui",
 				ctx->range.end);
 	}
+	/*fix the wrong end boundary if it occurs*/
+	if(range->end > 0 && range->end >= range->total){
+		range->end = total - 1;
+	}
+	ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: parse content range:%ui-%ui/%ui",
+			range->start, range->end, range->total);
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t *headers, ngx_str_t key, ngx_str_t val,
@@ -401,7 +422,7 @@ static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key)
 		}
 		if(ngx_strncasecmp(key.data, h[i].lowcase_key, h[i].key.len) == 0){
 			if(part->nelts == 1){ //just skip if we have one header in the part
-				prev->next = part->next;
+				part->nelts = 0;
 				break;
 			}
 			j = i + 1;
@@ -432,6 +453,90 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 		- range.data;
 	return range;
 }
+static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
+	ngx_pool_t *p, *pool;
+	ngx_http_subrange_checkpoint_t *cp;
+
+	/*make a checkpoint, record the last pool elements, large alloc, and cleanup handlers*/
+	r = r->main;
+	pool = r->pool;
+	cp = &ctx->checkpoint;
+
+	for(p = pool->current; p && p->d.next; p = p->d.next){/*void*/}
+
+	cp->current = pool->current;
+	cp->chain = pool->chain;
+	cp->pool = p;
+	cp->large = pool->large;
+	cp->pcleanup = pool->cleanup;
+	cp->cleanup = r->cleanup;
+
+	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: checkpoint p:%p, l:%p,pc:%p,c:%p" ,
+			cp->pool, cp->large, cp->pcleanup, cp->cleanup);
+	return NGX_OK;
+}
+/* The recovery routine will run the cleanup handler and free all the memory after checkpoint
+ * It is due to the caller to guarantee safe(Ex. resouce or memory will be never used later)
+ * */
+static ngx_int_t ngx_http_subrange_recovery(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
+	ngx_http_cleanup_t *cln;
+	ngx_pool_cleanup_t *pcln;
+	ngx_pool_large_t *large;
+	ngx_pool_t *p, *pool;
+	ngx_http_subrange_checkpoint_t *cp;
+
+	r = r->main;
+	cln = r->cleanup;
+	cp = &ctx->checkpoint;
+	pool = r->pool;
+	p = cp->pool->d.next;
+	if(p){
+		while(cln && cln != cp->cleanup){
+			if(cln->handler){
+				cln->handler(cln->data);
+			}
+			cln = cln->next;
+			r->main->cleanup = cln;
+		}
+
+		p->large = NULL; /*suppress ngx_destroy_pool*/
+		p->cleanup = NULL; /*suppress ngx_destroy_pool*/
+		
+		large = pool->large;
+		while(large && large != cp->large){
+			if(large->alloc){
+				ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+									   "free: %p", large->alloc);
+				ngx_free(large->alloc);
+				large->alloc = NULL;
+			}
+			large = large->next;
+			pool->large = large;
+		}
+		pcln = pool->cleanup;
+		while(pcln && pcln != cp->pcleanup){
+			if(pcln->handler){
+				ngx_log_debug1(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+										   "run cleanup: %p", pcln);
+				pcln->handler(pcln->data);
+			}
+			pcln = pcln->next;
+			pool->cleanup = pcln;
+		}
+
+		p->log = pool->log;
+		ngx_destroy_pool(p);
+
+		cp->pool->d.next = NULL; 
+		pool->current = cp->current;
+		pool->chain = cp->chain;
+
+		ngx_log_debug3(NGX_LOG_DEBUG_ALLOC, pool->log, 0,
+								   "http subrange run recovery: p:%p, c:%p, l:%p",cp->pool, pool->chain, pool->large);
+		pool->chain = NULL;
+	}
+	return NGX_OK;
+}
 static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
 	ngx_str_t uri;
 	ngx_str_t args;
@@ -440,12 +545,16 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ngx_str_t range_key = ngx_string("Range");
 	ngx_str_t range_value;
 	ngx_int_t size;
+	ngx_uint_t end;
 	ngx_http_subrange_loc_conf_t *rlcf;
+	ngx_http_core_srv_conf_t *cscf;
 	ngx_table_elt_t *hdr;
 
 	uri = r->uri;
 	args = r->args;
 	flags = NGX_HTTP_SUBREQUEST_WAITED;
+	cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
+
 	if(ngx_http_subrequest(r, &uri, &args, &sr, &ngx_http_subrange_post_subrequest_handler, flags)==NGX_ERROR){
 		return NGX_ERROR;
 	}
@@ -468,11 +577,21 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 		rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_subrange_module);
 		size = sizeof("bytes=-") + 2*NGX_SIZE_T_LEN;
 		range_value.data = ngx_palloc(sr->pool, size);
-		range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, ctx->offset + rlcf->size - 1)
-			- range_value.data;
+
+		end = ctx->offset + rlcf->size - 1;
+		if(ctx->range.end && ctx->range_request && 
+				end > ctx->range.end){
+			end = ctx->range.end;
+			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
+				- range_value.data;
+			ctx->done = 1;
+		}else{
+			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
+				- range_value.data;
+		}
 		ngx_http_subrange_set_header(sr, &sr->headers_in.headers, range_key, range_value, &hdr);
 		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: subrequest:%ud subrange:%i-%i",
-				ctx->sn, ctx->offset, ctx->offset + rlcf->size -1);
+				ctx->sn, ctx->offset, end);
 		if(hdr){
 			sr->headers_in.range = hdr;
 		}
@@ -530,6 +649,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ctx->done = 0;  // all subrequest done 
 	ctx->sn = 1;    // subrange sequence number
 	ctx->subrequest_done = 0; //the request/subrequest has been processed
+	ngx_memzero(&ctx->checkpoint, sizeof(ngx_http_subrange_checkpoint_t));
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
 	if(r == r->main){
@@ -605,10 +725,8 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	if(ctx == NULL || !ctx->touched){
 		return ngx_http_next_header_filter(r);
 	}
-	if(r->headers_out.content_length_n == -1){
-		return ngx_http_next_header_filter(r);
-	}
-	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT)
+	if(r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT ||
+			r->headers_out.content_length_n == -1)
 	{
 		if(r == r->main){
 			ctx->touched = 0; //upstream do not support subrange , untouch the request
@@ -621,7 +739,19 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	}
 	ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: p:%d,t:%d,d:%d,sd:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done);
-	ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range);
+	if(ngx_http_subrange_parse_content_range(r, ctx, &ctx->content_range) != NGX_OK){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange header filter: miss content range ,terminate request");
+		ctx->done = 1; //do not found the content-range header,output and finish the request, maybe accept-ranges is none
+		return ngx_http_next_header_filter(r);
+	}
+	if(ctx->content_range.start > ctx->content_range.end){
+		ngx_log_error(NGX_LOG_ERR, r->connection->log,0, "http subrange header filter: content range invalid,s:%d,e:%d,t:%d",
+				ctx->content_range.start, ctx->content_range.end, ctx->content_range.total);
+		ctx->done = 1;
+		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
+		ngx_http_clear_content_length(r)
+		return NGX_HTTP_BAD_GATEWAY;
+	}
 	/*Get the content range, and update the progress*/
 	if(r == r->main && !ctx->range_request){
 		r->headers_out.status = NGX_HTTP_OK; //Change 206 to 200
@@ -637,7 +767,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		r->headers_out.content_range = NULL;
 		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
-	}else if(ctx->content_range.end + 1 < ctx->content_range.total){
+	}else{
 		r->headers_out.content_length_n = ctx->range.end - ctx->range.start + 1;
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", r->headers_out.content_length_n)
@@ -651,7 +781,6 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 				ctx->range.start, ctx->range.end, ctx->content_range.total) - content_range.data;
 
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_range_key, content_range, NULL);
-		ctx->done = 0;
 	}
 	if(ctx->content_range.end + 1 >= ctx->content_range.total){
 		ctx->done = 1;
@@ -683,8 +812,8 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			}   
 		}
 		rc = ngx_http_next_body_filter(r, in);
-		ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d, d:%d",
-				ctx->processed, rc, r->connection->buffered,r->connection->write->delayed);
+		ngx_log_debug6(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest p:%d, rc:%d, b:%d, d:%d, o:%p, cp:%p",
+				ctx->processed, rc, r->connection->buffered,r->connection->write->delayed, r->out, ctx->checkpoint.pool);
 		if(rc == NGX_ERROR || rc == NGX_AGAIN || ctx->done){
 			return rc;
 		}
@@ -699,12 +828,17 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 					r->connection->write->delayed = 0;
 				}
 			}
-			/*clean up temporary files*/
-			if(ctx->r->upstream->pipe->temp_file->file.fd != NGX_INVALID_FILE){
-				ngx_pool_run_cleanup_file(ctx->r->pool, ctx->r->upstream->pipe->temp_file->file.fd);
-				ctx->r->upstream->pipe->temp_file->file.fd = NGX_INVALID_FILE;
+			/*recovey to last checkpoint*/
+			if(ctx->checkpoint.pool && r->main->out == NULL){
+				if(ngx_http_subrange_recovery(r, ctx) != NGX_OK){
+					return NGX_ERROR;
+				}
 			}
-
+			/*make a checkpoint before create the next subrequest*/
+			if(ngx_http_subrange_checkpoint(r, ctx) != NGX_OK){
+				return NGX_ERROR;
+			}
+			/*now, create the next subrequest*/
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
 			}
@@ -716,6 +850,10 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 		if(ctx && ctx->done && in){
 			for(cl = in; cl->next; cl = cl->next){/*void*/}
 			cl->buf->last_buf = 1;
+		}else if(in){/*check the special buf (refer to ngx_http_send_special)*/
+			if(in && in->buf->last_in_chain){
+				in->buf->flush = 1;
+			}
 		}
 		rc = ngx_http_next_body_filter(r, in);
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: after next body filter:rc:%d",
