@@ -96,12 +96,6 @@ ngx_module_t ngx_http_subrange_filter_module = {
 };
 
 /*------------- the api implements ------------*/
-#define NGX_HTTP_RANGE_ON   0x01;
-#define NGX_HTTP_RANGE_OFF  0x02;
-#define NGX_HTTP_RANGE_AUTO 0x04;
-#define NGX_DEFAULT_RANGE_SIZE 524288 //512*1024
-#define NGX_RANGE_KEY "Range"
-#define NGX_RANGE_KEY_SIZE sizeof(NGX_RANGE_KEY)
 typedef struct ngx_http_subrange_loc_conf_s{
 	ngx_int_t size;
 }ngx_http_subrange_loc_conf_t;
