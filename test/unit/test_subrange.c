@@ -115,7 +115,7 @@ void test_ngx_http_subrange_parse(){
 	ngx_str_t rangekey = ngx_string("Range");
 	ngx_str_t rangeval_normal = ngx_string("Bytes = 0-1023");
 	ngx_str_t rangeval_absent_start = ngx_string("Bytes = -1023");
-	ngx_str_t rangeval_absent_end = ngx_string("Bytes = 0-");
+	ngx_str_t rangeval_absent_end = ngx_string("Bytes = 5250276732-");
 	ngx_str_t rangeval_invalid = ngx_string("Bytes = abc");
 
 	ngx_table_elt_t		rangehdr;
@@ -148,9 +148,10 @@ void test_ngx_http_subrange_parse(){
 	/*test absent range end case*/
 	rangehdr.value = rangeval_absent_end;
 	ngx_http_subrange_parse(&r, &ctx, &range);
-	assert(range.start == 0);
+	assert(range.start == 5250276732);
 	assert(range.end == (ngx_uint_t) -1);
 	assert(range.total == 0);
+	printf("%lu, %lu, %lu", range.start, range.end, range.total);
 	pass("test_ngx_http_subrange_parse: range absent end");
 
 	/*test invalid range case*/

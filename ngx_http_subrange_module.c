@@ -449,7 +449,7 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 		return range;
 	}
 	range.data = data;
-	range.len = ngx_sprintf(range.data, "bytes=%ud-%ud", start, offset)
+	range.len = ngx_sprintf(range.data, "bytes=%ui-%ui", start, offset)
 		- range.data;
 	return range;
 }
@@ -582,11 +582,11 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 		if(ctx->range.end && ctx->range_request && 
 				end > ctx->range.end){
 			end = ctx->range.end;
-			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
+			range_value.len = ngx_sprintf(range_value.data, "bytes=%ui-%ui", ctx->offset, end)
 				- range_value.data;
 			ctx->done = 1;
 		}else{
-			range_value.len = ngx_sprintf(range_value.data, "bytes=%i-%i", ctx->offset, end)
+			range_value.len = ngx_sprintf(range_value.data, "bytes=%ui-%ui", ctx->offset, end)
 				- range_value.data;
 		}
 		ngx_http_subrange_set_header(sr, &sr->headers_in.headers, range_key, range_value, &hdr);
