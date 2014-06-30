@@ -150,6 +150,9 @@ static ngx_int_t ngx_http_subrange_init(ngx_conf_t *cf){
 	ngx_http_handler_pt             *h;
 	ngx_http_core_main_conf_t       *cmcf;
 	cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+	/* Register to NGX_HTTP_ACCESS_PHASE phase, so the handler only takes effect on
+	 * main request
+	 * */
 	h = ngx_array_push(&cmcf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
 	if(h == NULL){
 		return NGX_ERROR;
@@ -566,6 +569,13 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	if(rlcf->size == NGX_CONF_UNSET || rlcf->size == 0){
 		return NGX_DECLINED;
 	}
+	/*Maybe Range has been added if this is a internal redirect*/
+	if(r->internal){
+		ctx = ngx_http_get_module_ctx(r->main, ngx_http_subrange_filter_module);
+		if(ctx != NULL){
+			return NGX_DECLINED;
+		}
+	}
 	ctx = ngx_palloc(r->pool, sizeof(ngx_http_subrange_filter_ctx_t));
 	if(ctx == NULL){
 		return NGX_ERROR;
@@ -581,11 +591,6 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ngx_memzero(&ctx->checkpoint, sizeof(ngx_http_subrange_checkpoint_t));
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
-	if(r == r->main){
-		if(r->internal && r->headers_in.range){ //internal redirect main request, Range has been added
-			return NGX_DECLINED;
-		}
-	}
 	/*TODO process if-range*/
 
 	/*Not a range request*/

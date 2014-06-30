@@ -151,7 +151,6 @@ void test_ngx_http_subrange_parse(){
 	assert(range.start == 5250276732);
 	assert(range.end == (ngx_uint_t) -1);
 	assert(range.total == 0);
-	printf("%lu, %lu, %lu", range.start, range.end, range.total);
 	pass("test_ngx_http_subrange_parse: range absent end");
 
 	/*test invalid range case*/
@@ -736,6 +735,7 @@ void test_ngx_http_subrange_body_filter(){
 	rlcf = ngx_http_get_module_loc_conf((&r), ngx_http_subrange_module);
 
 	/*untouched*/
+	in = NULL;
 	ctx->touched = 0;
 	assert(ngx_http_subrange_body_filter(&r, in) == NGX_OK);
 
