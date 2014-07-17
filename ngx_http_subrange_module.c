@@ -765,7 +765,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", ctx->content_range.total)
 							- content_length.data;
-		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length,NULL);
+		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length, &r->headers_out.content_length);
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
 		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
@@ -777,7 +777,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", r->headers_out.content_length_n)
 							 - content_length.data;
-		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length, NULL);
+		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length, &r->headers_out.content_length);
 
 		size = 0;
 		size += sizeof("bytes -/") - 1 + 3 * NGX_SIZE_T_LEN;
