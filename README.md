@@ -3,6 +3,9 @@ ngx_http_subrange_module
 
 Split one big download file request to multiple subrange requests to avoid geting too
 much data from upstream at one time.
+Install:
+--------
+Compile nginx with `--add-module=/path/to/ngx_http_subrange_module`
 
 Directive:
 ---------
@@ -54,6 +57,3 @@ location /download{
     subrange $size;
 }
 ```
-Install:
---------
-Compile nginx with `--add-module=/path/to/ngx_http_subrange_module`
