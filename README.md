@@ -43,7 +43,7 @@ file from the upstream, for example downloads 5M first, and then the next 5M, un
 the client receives the whole file. The whole process is non-sensible to client.
 You can set the chunk size in the nginx configuration file.
 
-The module sets the HTTP `Range` header(http://tools.ietf.org/html/rfc2616#section-14.35)
+The module sets the HTTP [Range](http://tools.ietf.org/html/rfc2616#section-14.35) header
  to perform a Range request to get a chunk
 from the upstream. So the supporting of Range request is needed by upstream. Supporting
 `Range` is easy, all standard HTTP servers like nginx/apache have implemented it.
