@@ -10,4 +10,4 @@ script:
   - cd test/unit/
   - export NGINX_PATH=/tmp/nginx && ./configure
   - make
-  - ./test_range
+  - ./test_subrange
