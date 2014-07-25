@@ -7,6 +7,6 @@ install:
   - hg clone http://hg.nginx.org/nginx /tmp/nginx
 script:
   - cd test/unit/
-  - export NGINX_PAHT=/tmp/nginx && ./configure
+  - export NGINX_PATH=/tmp/nginx && ./configure
   - make
   - ./test_range
