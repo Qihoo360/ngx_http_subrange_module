@@ -1,6 +1,8 @@
 ngx_http_subrange_module
 ========================
 
+[![Build Status](https://travis-ci.org/shafreeck/ngx_http_subrange_module.svg?branch=master)](https://travis-ci.org/shafreeck/ngx_http_subrange_module)
+
 Split one big download file request to multiple subrange requests to avoid geting too
 much data from upstream at one time.
 Install:
