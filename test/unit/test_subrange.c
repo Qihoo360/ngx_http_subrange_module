@@ -381,7 +381,6 @@ void test_ngx_http_subrange_checkpoint_and_recovery(){
 	pass("checkpoint recovery");
 }
 void test_ngx_http_subrange_create_subrequest(){
-	ngx_conf_t cf;
 	ngx_http_request_t	r;
 	ngx_http_subrange_filter_ctx_t ctx;
 	ngx_http_subrange_loc_conf_t *rlcf;
@@ -392,7 +391,6 @@ void test_ngx_http_subrange_create_subrequest(){
 	assert(ctx.r->main == &r);
 
 	/*range request with request size > range size*/
-	cf.pool = r.pool;
 	rlcf = ngx_http_get_module_loc_conf((&r), ngx_http_subrange_module);
 	rlcf->size = 10;
 	ctx.range.end = 16;
@@ -727,12 +725,10 @@ void test_ngx_http_subrange_body_filter(){
 	ngx_chain_t *in;
 	ngx_http_request_t r;
 	ngx_http_subrange_filter_ctx_t *ctx;
-	ngx_http_subrange_loc_conf_t *rlcf;
 
 	ngx_test_init_request(&r);
 
 	ctx = ngx_http_get_module_ctx((&r), ngx_http_subrange_filter_module);
-	rlcf = ngx_http_get_module_loc_conf((&r), ngx_http_subrange_module);
 
 	/*untouched*/
 	in = NULL;

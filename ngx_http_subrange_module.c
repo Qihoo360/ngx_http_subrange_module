@@ -180,10 +180,7 @@ static char * ngx_http_subrange_subrange_cmd(ngx_conf_t *cf, ngx_command_t *cmd,
 	ngx_uint_t n;
 	ngx_http_script_compile_t sc;
 	ngx_http_subrange_loc_conf_t *slcf;
-	ngx_array_t *lengths, *values;
 
-	lengths = NULL;
-	values = NULL;
 	slcf = conf;
 
 	value = cf->args->elts;
@@ -406,19 +403,17 @@ static ngx_int_t ngx_http_subrange_set_header(ngx_http_request_t *r, ngx_list_t 
 	return NGX_OK;
 }
 static ngx_int_t ngx_http_subrange_rm_header(ngx_list_t *headers, ngx_str_t key){
-	ngx_list_part_t *part, *prev;
+	ngx_list_part_t *part;
 	ngx_table_elt_t *h;
 	ngx_uint_t i,j;
 
 	part = &headers->part;
 	h = part->elts;
-	prev = NULL;
 	for(i = 0;/* void */; ++i){
 		if(i >= part->nelts){
 			if(part->next == NULL){
 				break;
 			}
-			prev = part;
 			part = part->next;
 			h = part->elts;
 			i = 0;
@@ -550,13 +545,11 @@ static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_
 	ngx_int_t size;
 	ngx_uint_t end;
 	ngx_http_subrange_loc_conf_t *rlcf;
-	ngx_http_core_srv_conf_t *cscf;
 	ngx_table_elt_t *hdr;
 
 	uri = r->uri;
 	args = r->args;
 	flags = NGX_HTTP_SUBREQUEST_WAITED;
-	cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
 
 	if(ngx_http_subrequest(r, &uri, &args, &sr, &ngx_http_subrange_post_subrequest_handler, flags)==NGX_ERROR){
 		return NGX_ERROR;
@@ -610,14 +603,10 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ngx_table_elt_t *h;
 	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_subrange_filter_ctx_t *ctx;
-	ngx_int_t rstart,rend;
 	ngx_str_t key = ngx_string("Range");
 
 	ngx_str_t subrange;
 	size_t size;
-
-	rstart = 0;
-	rend   = 0;
 
 	/*Only support GET or POST*/
 	if(!(r->method & (NGX_HTTP_GET | NGX_HTTP_POST))){
@@ -708,7 +697,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	return NGX_DECLINED;
 }
 static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
-	ngx_int_t rstart,rend,rtotal,size;
+	ngx_int_t size;
 	ngx_http_subrange_loc_conf_t *rlcf;
 	ngx_http_subrange_filter_ctx_t *ctx;
 	ngx_str_t content_length;
@@ -717,9 +706,6 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 	ngx_str_t content_range_key = ngx_string("Content-Range");
 	ngx_str_t content_range;
 
-	rstart = 0;
-	rtotal = 0;
-	rend   = 0;
 	size   = 0;
 
 	rlcf = ngx_http_get_module_loc_conf(r->main, ngx_http_subrange_module);
