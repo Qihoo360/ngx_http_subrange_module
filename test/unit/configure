@@ -11,7 +11,7 @@ if [ ! -d "$NGINX_PATH" ]
 then
 	echo -e $COLOR_FAILED
 	echo "  Please set NGINX_PATH correctly, got:$NGINX_PATH"
-	exit
+	exit 1
 fi
 echo -e $COLOR_OK
 
@@ -22,7 +22,7 @@ if [ $? -ne 0 ]
 then
 	echo -e $COLOR_FAILED
 	echo "  Replace main( by main2( failed"
-	exit
+	exit 1
 fi
 echo -e $COLOR_OK
 
@@ -33,7 +33,7 @@ if [ $? -ne 0 ]
 then
 	echo -e $COLOR_FAILED
 	echo "  run $NGINX_PATH/configure failed"
-	exit
+	exit 1
 fi
 cd -
 echo -e $COLOR_OK
@@ -43,7 +43,7 @@ if [ ! -f "$NGINX_PATH/objs/Makefile" ]
 then
 	echo -e $COLOR_FAILED
 	echo "  Please run configure of $NGINX_PATH first"
-	exit
+	exit 1
 fi
 echo -e $COLOR_OK
 
@@ -64,7 +64,7 @@ if [ ! -e "$NGINX_PATH/src/core/ngx_config.h" ]
 then
 	echo -e $COLOR_FAILED
 	echo "  Please run make of $NGINX_PATH first"
-	exit
+	exit 1
 fi
 echo -e $COLOR_OK
 
