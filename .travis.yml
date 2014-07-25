@@ -3,7 +3,7 @@ language: c
 before_install:
   - sudo apt-get update -qq
 install:
-    - sudo apt-get -y install hg
+  - sudo apt-get -y install hg
   - hg clone http://hg.nginx.org/nginx /tmp/nginx
 script:
   - cd test/unit/
