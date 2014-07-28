@@ -5,11 +5,13 @@ import hashlib
 from httplib import HTTPConnection
 from functools import wraps
 
-uricgi = '/download.py?fname=rand10m.html'
-uriproxy='/rand10m.html'
+uricgi = '/download.py?fname=rand10m'
+uriproxy='/rand10m'
 COLOR_PASS = "\033[94m"
 COLOR_FAILED = "\033[91m"
 COLOR_END = "\033[0m"
+firstmd5 = '55c6d96e71759b713e23b3dae0c205a3'
+finalmd5 = '5a812c35149308b8df79cedea72887ae'
 
 def tpass(name):
 	return 'test ' + name + COLOR_PASS + ' PASS' + COLOR_END
@@ -57,7 +59,7 @@ def test_absent_content_length(uri):
 	tassertEqual(resp.status, 200)
 	tassert(resp.getheader("Test-Type"), "test_absent_content_length")
 	body = resp.read()
-	tassertMd5(body, "e116f4f85128f2aa2562e7101a9a16bd") #md5 of first 1m
+	tassertMd5(body, firstmd5) #md5 of first 1m
 
 @test
 def test_absent_content_range(uri):
@@ -67,7 +69,7 @@ def test_absent_content_range(uri):
 	tassert(resp)
 	tassertEqual(resp.status, 200)
 	tassertEqual(resp.getheader("Test-Type"), "test_absent_content_length")
-	tassertMd5(resp.read(), "e116f4f85128f2aa2562e7101a9a16bd")
+	tassertMd5(resp.read(), firstmd5)
 
 @test
 def test_illegal_content_range(uri):
@@ -84,7 +86,7 @@ def test_more_content_length(uri):
 	tassert(resp)
 	tassertEqual(resp.status, 200)
 	tassertEqual(resp.getheader("Test-Type"), "test_more_content_length")
-	tassertMd5(resp.read(), "9134b35cb5af4d8a642a1fb1cf77bff9") #md5 of file
+	tassertMd5(resp.read(), finalmd5) #md5 of file
 
 @test
 def test_return_200_ok(uri):
@@ -93,7 +95,7 @@ def test_return_200_ok(uri):
 	tassert(resp)
 	tassertEqual(resp.status, 200)
 	tassertEqual(resp.getheader("Test-Type"), "test_return_200_ok")
-	tassertMd5(resp.read(), "e116f4f85128f2aa2562e7101a9a16bd")
+	tassertMd5(resp.read(), firstmd5)
 
 @test
 def test_return_500_error(uri):
@@ -110,7 +112,7 @@ def test_normal(uri):
 	tassert(resp)
 	tassertEqual(resp.status, 200)
 	tassert(resp.getheader("Test-Type"), "test_normal")
-	tassertMd5(resp.read(), "9134b35cb5af4d8a642a1fb1cf77bff9")
+	tassertMd5(resp.read(), finalmd5)
 
 ## begin test client request ##
 @test
@@ -119,7 +121,7 @@ def test_absent_range_end(uri):
 	resp = http_download_get_request(uri, hdrs)
 	tassert(resp)
 	tassertEqual(resp.status, 206)
-	tassertMd5(resp.read(), "9134b35cb5af4d8a642a1fb1cf77bff9")
+	tassertMd5(resp.read(), finalmd5)
 @test
 def test_absent_range_start(uri):
 	hdrs = {"Range": "Bytes=-100"}
