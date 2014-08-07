@@ -28,7 +28,7 @@ Example:
 Introduction:
 -------------
 When nginx is used as a reverse proxy for file downloading service, it will
-always run out the bandwidth between nginx and upstream when the user requests
+always run out of the bandwidth between nginx and upstream when the user requests
 a very large file. This is because nginx fetch a whole file at a time and buffer
 the left data that the client can not read in time. The bandwidth would be used up
 and the disk iowait would be high.
