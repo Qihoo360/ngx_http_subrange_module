@@ -739,6 +739,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_log_error(NGX_LOG_ERR, r->connection->log,0, "http subrange header filter: content range invalid,s:%d,e:%d,t:%d",
 				ctx->content_range.start, ctx->content_range.end, ctx->content_range.total);
 		ctx->done = 1;
+		r->headers_out.content_range = NULL;
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
 		ngx_http_clear_content_length(r)
 		return NGX_HTTP_BAD_GATEWAY;
@@ -748,16 +749,17 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		r->headers_out.status = NGX_HTTP_OK; //Change 206 to 200
 		r->headers_out.content_length_n = ctx->content_range.total;
 
+		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
+		r->headers_out.content_range = NULL;
+		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
+		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
+
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", ctx->content_range.total)
 							- content_length.data;
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length, &r->headers_out.content_length);
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
-		r->headers_out.content_range = NULL;
-		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
-		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
 	}else{
 		r->headers_out.content_length_n = ctx->range.end - ctx->range.start + 1;
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
