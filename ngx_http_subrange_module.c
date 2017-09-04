@@ -680,6 +680,10 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 		if(ctx->range.start == (ngx_uint_t)-1){
 			return NGX_DECLINED;
 		}
+        if(ctx->range.start > ctx->range.end) {
+             ngx_http_finalize_request(r, NGX_HTTP_RANGE_NOT_SATISFIABLE);
+             return NGX_ERROR;
+        }
 		/*Do not support multipart ranges*/
 		if(ctx->singlepart == 0){
 			return NGX_DECLINED;
