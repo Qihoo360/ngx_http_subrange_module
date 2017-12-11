@@ -135,6 +135,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_uint_t processed:1;     /*subrequest has been processed*/
 	ngx_uint_t done:1;     /*subrequest has been processed*/
 	ngx_uint_t subrequest_done:1;     /*subrequest has been processed*/
+	ngx_uint_t upstream_prematurely_closed:1;     /*upstream prematurely closed connection*/
 }ngx_http_subrange_filter_ctx_t;
 
 static ngx_http_post_subrequest_t ngx_http_subrange_post_subrequest_handler = 
@@ -805,6 +806,16 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	}
 	ngx_log_debug7(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%d,t:%d,d:%d,sd:%d,c:%p,r:%p,b:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done, in, r, r->connection->buffered);
+
+    if(r->upstream &&
+          (r->upstream->pipe->upstream_eof ||    // upstream eof
+           r->upstream->pipe->upstream_error) && // upstream error
+        !r->upstream->pipe->upstream_done ){     // upstream not done
+
+        ctx->upstream_prematurely_closed = 1;
+
+    }
+
 	if(r == r->main){
 		for (cl = in; cl; cl = cl->next) {
 			if (cl->buf->last_buf) {
@@ -832,9 +843,16 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 				}
 			}
             /*check about the upstream connection*/
-            if(r->upstream && (r->upstream->peer.connection->read->eof || r->upstream->peer.connection->read->error)){
+            if (ctx->upstream_prematurely_closed) {
+                ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest rc:%d, eof:%d, err:%d, done:%d",
+                    rc, r->upstream->pipe->upstream_eof, r->upstream->pipe->upstream_error, r->upstream->pipe->upstream_done);
+                // upstream closed connection prematurely, and all pending data has been sent
+                // now, abort all subsequent requests and return error
+                ctx->done = 1;
+
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "http subrange body filter: mainrequest abort subsequent requests because of upstream unexpected exit");
                 return NGX_ERROR;
-			}
+            }
 			/*now, create the next subrequest*/
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
