@@ -835,6 +835,11 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 			if(ngx_http_subrange_checkpoint(r, ctx) != NGX_OK){
 				return NGX_ERROR;
 			}
+            /*check about the upstream connection*/
+            if(r->upstream && (r->upstream->peer.connection->read->eof || r->upstream->peer.connection->read->error)){
+                return NGX_ERROR;
+			}
+
 			/*now, create the next subrequest*/
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
