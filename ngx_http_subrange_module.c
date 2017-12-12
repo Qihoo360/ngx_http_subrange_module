@@ -655,6 +655,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ctx->done = 0;  // all subrequest done 
 	ctx->sn = 1;    // subrange sequence number
 	ctx->subrequest_done = 0; //the request/subrequest has been processed
+    ctx->upstream_prematurely_closed = 0;
 	ngx_memzero(&ctx->checkpoint, sizeof(ngx_http_subrange_checkpoint_t));
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
