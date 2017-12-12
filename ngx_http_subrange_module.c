@@ -452,19 +452,16 @@ static ngx_str_t ngx_http_subrange_get_range(ngx_http_request_t *r, ngx_int_t st
 		- range.data;
 	return range;
 }
-/*
 static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
 	ngx_pool_t *p, *pool;
 	ngx_http_subrange_checkpoint_t *cp;
 
-	//make a checkpoint, record the last pool elements, large alloc, and cleanup handlers
+	/*make a checkpoint, record the last pool elements, large alloc, and cleanup handlers*/
 	r = r->main;
 	pool = r->pool;
 	cp = &ctx->checkpoint;
 
-	for(p = pool->current; p && p->d.next; p = p->d.next){
-	//void
-	}
+	for(p = pool->current; p && p->d.next; p = p->d.next){/*void*/}
 
 	cp->current = pool->current;
 	cp->chain = pool->chain;
@@ -477,12 +474,10 @@ static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_su
 			cp->pool, cp->large, cp->pcleanup, cp->cleanup);
 	return NGX_OK;
 }
-*/
-
 /* The recovery routine will run the cleanup handler and free all the memory after checkpoint
  * It is due to the caller to guarantee safe(Ex. resouce or memory will be never used later)
  * */
-/*static ngx_int_t ngx_http_subrange_recovery(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
+static ngx_int_t ngx_http_subrange_recovery(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
 	ngx_http_cleanup_t *cln;
 	ngx_pool_cleanup_t *pcln;
 	ngx_pool_large_t *large;
@@ -503,8 +498,8 @@ static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_su
 			r->main->cleanup = cln;
 		}
 
-		p->large = NULL; //suppress ngx_destroy_pool
-		p->cleanup = NULL; //suppress ngx_destroy_pool
+		p->large = NULL; /*suppress ngx_destroy_pool*/
+		p->cleanup = NULL; /*suppress ngx_destroy_pool*/
 		
 		large = pool->large;
 		while(large && large != cp->large){
@@ -541,7 +536,6 @@ static ngx_int_t ngx_http_subrange_checkpoint(ngx_http_request_t *r, ngx_http_su
 	}
 	return NGX_OK;
 }
-*/
 static ngx_int_t ngx_http_subrange_create_subrequest(ngx_http_request_t *r, ngx_http_subrange_filter_ctx_t *ctx){
 	ngx_str_t uri;
 	ngx_str_t args;
@@ -854,6 +848,16 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "http subrange body filter: mainrequest abort subsequent requests because of upstream unexpected exit");
                 return NGX_ERROR;
             }
+			/*recovey to last checkpoint*/
+			if(ctx->checkpoint.pool && r->main->out == NULL){
+				if(ngx_http_subrange_recovery(r, ctx) != NGX_OK){
+					return NGX_ERROR;
+				}
+			}
+			/*make a checkpoint before create the next subrequest*/
+			if(ngx_http_subrange_checkpoint(r, ctx) != NGX_OK){
+				return NGX_ERROR;
+			}
 			/*now, create the next subrequest*/
 			if(ngx_http_subrange_create_subrequest(r->main, ctx) != NGX_OK){
 				return NGX_ERROR;
