@@ -767,7 +767,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
 	}else{
-		r->headers_out.content_length_n = ctx->range.end - ctx->range.start + 1;
+		r->headers_out.content_length_n = ctx->content_range.end - ctx->content_range.start + 1;
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", r->headers_out.content_length_n)
 							 - content_length.data;
@@ -777,7 +777,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		size += sizeof("bytes -/") - 1 + 3 * NGX_SIZE_T_LEN;
 		content_range.data = ngx_palloc(r->pool, size);
 		content_range.len = ngx_sprintf(content_range.data, "bytes %ui-%ui/%ui",
-				ctx->range.start, ctx->range.end, ctx->content_range.total) - content_range.data;
+				ctx->content_range.start, ctx->content_range.end, ctx->content_range.total) - content_range.data;
 
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_range_key, content_range, NULL);
 	}
