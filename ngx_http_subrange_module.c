@@ -135,6 +135,7 @@ typedef struct ngx_http_subrange_filter_ctx_s{
 	ngx_uint_t processed:1;     /*subrequest has been processed*/
 	ngx_uint_t done:1;     /*subrequest has been processed*/
 	ngx_uint_t subrequest_done:1;     /*subrequest has been processed*/
+	ngx_uint_t upstream_prematurely_closed:1;     /*upstream prematurely closed connection*/
 }ngx_http_subrange_filter_ctx_t;
 
 static ngx_http_post_subrequest_t ngx_http_subrange_post_subrequest_handler = 
@@ -648,6 +649,7 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 	ctx->done = 0;  // all subrequest done 
 	ctx->sn = 1;    // subrange sequence number
 	ctx->subrequest_done = 0; //the request/subrequest has been processed
+    ctx->upstream_prematurely_closed = 0;
 	ngx_memzero(&ctx->checkpoint, sizeof(ngx_http_subrange_checkpoint_t));
 
 	ngx_http_set_ctx(r, ctx, ngx_http_subrange_filter_module);
@@ -680,6 +682,10 @@ static ngx_int_t ngx_http_subrange_set_header_handler(ngx_http_request_t *r){
 		if(ctx->range.start == (ngx_uint_t)-1){
 			return NGX_DECLINED;
 		}
+        if(ctx->range.start > ctx->range.end) {
+             ngx_http_finalize_request(r, NGX_HTTP_RANGE_NOT_SATISFIABLE);
+             return NGX_ERROR;
+        }
 		/*Do not support multipart ranges*/
 		if(ctx->singlepart == 0){
 			return NGX_DECLINED;
@@ -739,6 +745,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		ngx_log_error(NGX_LOG_ERR, r->connection->log,0, "http subrange header filter: content range invalid,s:%d,e:%d,t:%d",
 				ctx->content_range.start, ctx->content_range.end, ctx->content_range.total);
 		ctx->done = 1;
+		r->headers_out.content_range = NULL;
 		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
 		ngx_http_clear_content_length(r)
 		return NGX_HTTP_BAD_GATEWAY;
@@ -748,18 +755,19 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		r->headers_out.status = NGX_HTTP_OK; //Change 206 to 200
 		r->headers_out.content_length_n = ctx->content_range.total;
 
+		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
+		r->headers_out.content_range = NULL;
+		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
+		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
+
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", ctx->content_range.total)
 							- content_length.data;
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_length_key, content_length, &r->headers_out.content_length);
 
 		r->headers_out.status_line = ngx_http_status_lines[0];
-		r->headers_in.range = NULL; // clear the request range header to surpress ngx_http_range_filter_module
-		r->headers_out.content_range = NULL;
-		ngx_http_subrange_rm_header(&r->headers_in.headers, range_key);
-		ngx_http_subrange_rm_header(&r->headers_out.headers, content_range_key);
 	}else{
-		r->headers_out.content_length_n = ctx->range.end - ctx->range.start + 1;
+		r->headers_out.content_length_n = ctx->content_range.end - ctx->content_range.start + 1;
 		content_length.data = ngx_palloc(r->pool, NGX_SIZE_T_LEN);
 		content_length.len = ngx_sprintf(content_length.data, "%ui", r->headers_out.content_length_n)
 							 - content_length.data;
@@ -769,7 +777,7 @@ static ngx_int_t ngx_http_subrange_header_filter(ngx_http_request_t *r){
 		size += sizeof("bytes -/") - 1 + 3 * NGX_SIZE_T_LEN;
 		content_range.data = ngx_palloc(r->pool, size);
 		content_range.len = ngx_sprintf(content_range.data, "bytes %ui-%ui/%ui",
-				ctx->range.start, ctx->range.end, ctx->content_range.total) - content_range.data;
+				ctx->content_range.start, ctx->content_range.end, ctx->content_range.total) - content_range.data;
 
 		ngx_http_subrange_set_header(r, &r->headers_out.headers, content_range_key, content_range, NULL);
 	}
@@ -793,6 +801,16 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 	}
 	ngx_log_debug7(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: p:%d,t:%d,d:%d,sd:%d,c:%p,r:%p,b:%d",
 			ctx->processed, ctx->touched, ctx->done, ctx->subrequest_done, in, r, r->connection->buffered);
+
+    if(r->upstream &&
+          (r->upstream->pipe->upstream_eof ||    // upstream eof
+           r->upstream->pipe->upstream_error) && // upstream error
+        !r->upstream->pipe->upstream_done ){     // upstream not done
+
+        ctx->upstream_prematurely_closed = 1;
+
+    }
+
 	if(r == r->main){
 		for (cl = in; cl; cl = cl->next) {
 			if (cl->buf->last_buf) {
@@ -819,6 +837,17 @@ static ngx_int_t ngx_http_subrange_body_filter(ngx_http_request_t *r, ngx_chain_
 					r->connection->write->delayed = 0;
 				}
 			}
+            /*check about the upstream connection*/
+            if (ctx->upstream_prematurely_closed) {
+                ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log,0, "http subrange body filter: mainrequest rc:%d, eof:%d, err:%d, done:%d",
+                    rc, r->upstream->pipe->upstream_eof, r->upstream->pipe->upstream_error, r->upstream->pipe->upstream_done);
+                // upstream closed connection prematurely, and all pending data has been sent
+                // now, abort all subsequent requests and return error
+                ctx->done = 1;
+
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "http subrange body filter: mainrequest abort subsequent requests because of upstream unexpected exit");
+                return NGX_ERROR;
+            }
 			/*recovey to last checkpoint*/
 			if(ctx->checkpoint.pool && r->main->out == NULL){
 				if(ngx_http_subrange_recovery(r, ctx) != NGX_OK){
